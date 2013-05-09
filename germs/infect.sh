@@ -42,8 +42,10 @@ function infect()
 		local _infected=
 		_gloubi_infect_path $1/sbin PATH && _infected=1
 		_gloubi_infect_path $1/bin PATH && _infected=1
-		_gloubi_infect_path $1/lib LD_LIBRARY_PATH && _infected=1
-		_gloubi_infect_path $1/lib64 LD_LIBRARY_PATH && _infected=1
+		for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
+			_gloubi_infect_path $1/lib $lib_path && _infected=1
+			_gloubi_infect_path $1/lib64 $lib_path && _infected=1
+		done
 		for mandir in $(find "$1" -type d -name man -prune) ; do
 			_gloubi_infect_path "$1/$mandir" MANPATH && _infected=1
 		done

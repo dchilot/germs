@@ -28,6 +28,10 @@ function cure()
 		_gloubi_cure_path $1/bin PATH
 		_gloubi_cure_path $1/lib LD_LIBRARY_PATH
 		_gloubi_cure_path $1/lib64 LD_LIBRARY_PATH
+		for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
+			_gloubi_cure_path $1/lib $lib_path
+			_gloubi_cure_path $1/lib64 $lib_path
+		done
 		for mandir in $(find "$1" -type d -name man -prune) ; do
 			_gloubi_cure_path "$1/$mandir" MANPATH
 		done
