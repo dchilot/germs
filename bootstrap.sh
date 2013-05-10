@@ -1,4 +1,5 @@
-#/usr/bin/sh
+#/usr/bin/bash
+set -e
 # packages needed: wget curl zlib-devel python gcc make
 dir="$(readlink -e "$(dirname "$0")")"
 mkdir -p $HOME/env
@@ -14,6 +15,8 @@ if [ -z "$(which virtualenv)" ] ; then
 	python setup.py install
 fi
 cd $dir
+pwd
 virtualenv env
+ls env/bin/activate
 source env/bin/activate
 pip install -r requirements.txt

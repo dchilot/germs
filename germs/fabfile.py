@@ -38,7 +38,7 @@ def init_path(path_name):
 
 
 def install(name, destination=None, step=0,
-            flags='', maker_flags='', environment=''):
+            flags='', maker_flags='', environment='', test=False):
     """
     Command to install some software.
     """
@@ -82,11 +82,13 @@ def install(name, destination=None, step=0,
                 #local('echo "local_step=%s"' % local_step)
                 config.install(destination, step=local_step,
                                flags=flags, maker_flags=maker_flags,
-                               environment=environment)
+                               environment=environment, test=test)
             except StopIteration:
                 print "No need to install %s" % (config.name)
             full_destination = config.prefix
             roots.append('ROOT_' + config.varname + '=' + full_destination)
+            if (test):
+                continue
             for sub_dir in os.listdir(full_destination):
                 if (sub_dir in ['lib', 'lib64']):
                     ld_library_path.insert(
@@ -205,20 +207,38 @@ class Config(object):
                 print "'%s' already exists." % (self._prefix)
                 raise StopIteration
 
-    def _install_1(self, step, archive, directory, working_dir, archive_dir,
+    def _install_1(self, step, archive, downloader, working_dir, archive_dir,
                    extraction_directory):
         """
-        Step 1: Download and extract the tar file if needed. For now it only
-            works for wget compatible addresses.
+        `archive`: name of the archive to be downloaded (only valid for wget).
+        `dowloader`: program used to download the software.
+        Step 1: For wget compatible addresses, download and extract the tar
+          file if needed.
+          For hg or git, perform a clone.
         """
         if (1 >= step):
             print 1
             os.chdir(archive_dir)
-            local("wget -nc --no-check-certificate %s" % self.address)
-            import tarfile
-            tar = tarfile.open(archive)
-            if (not os.path.isdir(extraction_directory)):
-                tar.extractall(working_dir)
+            if ('wget' == downloader):
+                local("wget -nc --no-check-certificate %s" % self.address)
+                import tarfile
+                tar = tarfile.open(archive)
+                if (not os.path.isdir(extraction_directory)):
+                    tar.extractall(working_dir)
+            elif ('hg' == downloader):
+                clone_needed = True
+                if (os.path.exists(extraction_directory)):
+                    os.chdir(extraction_directory)
+                    try:
+                        local('hg pull && hg update')
+                        clone_needed = False
+                    except:
+                        os.remove(extraction_directory)
+                if (clone_needed):
+                    local('hg clone %s %s' %
+                          (self.address, extraction_directory))
+            elif ('git' == downloader):
+                local('git clone %s %s' % (self.address, extraction_directory))
 
     def _install_2(self, step, extraction_directory):
         """
@@ -299,7 +319,7 @@ class Config(object):
                 local("touch " + os.path.join(deps_dir, dep.name))
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
-                flags='', maker_flags='', environment=''):
+                flags='', maker_flags='', environment='', test=False):
         """
         `destination`: root folder which will contain a directory named
             after the configuration (name is used) where the software will
@@ -312,9 +332,24 @@ class Config(object):
         self._global_environment = environment
         print 'Start installation at step %i' % step
         archive = self.address.split('/')[-1]
-        directory, _, _ = archive.partition('.tar')
+        directory, tar, _ = archive.partition('.tar')
+        is_tar = ('.tar' == tar)
+        if (not is_tar):
+            address = self.address.rstrip('/')
+            if (address.endswith('hg')):
+                downloader = 'hg'
+            elif (address.endswith('git')):
+                downloader = 'git'
+            else:
+                raise Exception("Do not know how to dowload from '%s'" %
+                                self.address)
+            directory = self._name
+        else:
+            downloader = 'wget'
         self._prefix = os.path.join(destination, self._name)
         self._install_0(step)
+        if (test):
+            return
         if (working_dir is None):
             import tempfile
             working_dir = tempfile.gettempdir()
@@ -322,7 +357,7 @@ class Config(object):
             import tempfile
             archive_dir = tempfile.gettempdir()
         extraction_directory = os.path.join(working_dir, directory)
-        self._install_1(step, archive, directory, working_dir, archive_dir,
+        self._install_1(step, archive, downloader, working_dir, archive_dir,
                         extraction_directory)
         self._install_2(step, extraction_directory)
         self._install_3_4_5(step, extraction_directory)
