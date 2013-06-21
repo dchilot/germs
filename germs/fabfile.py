@@ -27,6 +27,13 @@ def get_is_valid_url(url):
 
 
 def init_path(path_name):
+    """
+    `path_name`: name of the environment variable to get.
+    Return the expected environment variable in a list. If the variable is
+    not found the list is empty.
+    Despite its name this is not specific to paths but could work for any
+    environment variable.
+    """
     path_array = []
     try:
         var = os.environ[path_name]
@@ -38,7 +45,8 @@ def init_path(path_name):
 
 
 def install(name, destination=None, step=0,
-            flags='', maker_flags='', environment='', test=False):
+            flags='', maker_flags='', installer_flags='', environment='',
+            force=False, test=False):
     """
     Command to install some software.
     """
@@ -80,9 +88,14 @@ def install(name, destination=None, step=0,
                 else:
                     print "Install dependency: %s" % config.name
                 #local('echo "local_step=%s"' % local_step)
+                # We do not want to force dependencies to be reinstalled
+                # if force=True is used so we only do it when is_root is True.
                 config.install(destination, step=local_step,
                                flags=flags, maker_flags=maker_flags,
-                               environment=environment, test=test)
+                               installer_flags=installer_flags,
+                               environment=environment,
+                               force=(force and is_root),
+                               test=test)
             except StopIteration:
                 print "No need to install %s" % (config.name)
             full_destination = config.prefix
@@ -119,6 +132,13 @@ class RecipeBook(object):
         return recipe
 
 
+def spaced(string):
+    """
+    Return the provided string prepended with a space if not empty.
+    """
+    return ' ' + string if (string) else ""
+
+
 class Config(object):
     """
     Mapping of a recipe with extra logic to install it.
@@ -138,7 +158,8 @@ class Config(object):
         self._dependencies = set()
         self._prefix = None
         self._global_flags = ''
-        self._global_maker_falgs = ''
+        self._global_maker_flags = ''
+        self._global_installer_flags = ''
         self._global_environment = ''
         if (parser is not None):
             deps = self._values['dependencies']
@@ -179,15 +200,24 @@ class Config(object):
 
     @property
     def flags(self):
-        return self._values['flags'] + ' ' + self._global_flags
+        return self._values['flags'] + spaced(self._global_flags)
 
     @property
     def maker_flags(self):
-        return self._values['maker_flags'] + ' ' + self._global_maker_falgs
+        return self._values['maker_flags'] + spaced(self._global_maker_flags)
+
+    @property
+    def installer_flags(self):
+        return self._values['installer_flags'] +\
+                spaced(self._global_installer_flags)
 
     @property
     def environment(self):
-        return self._values['environment'] + ' ' + self._global_environment
+        return self._values['environment'] + spaced(self._global_environment)
+
+    @property
+    def force(self):
+        return self._values['force']
 
     @property
     def build_out_of_sources(self):
@@ -197,15 +227,20 @@ class Config(object):
     def dependencies(self):
         return self._dependencies
 
-    def _install_0(self, step):
+    def _install_0(self, step, force, test):
         """
         Step 0: Check if the recipe has been installed.
         """
         if (0 >= step):
             print 0
             if (os.path.isdir(self._prefix)):
-                print "'%s' already exists." % (self._prefix)
-                raise StopIteration
+                if (force):
+                    if (not test):
+                        import shutil
+                        shutil.rmtree(self._prefix)
+                else:
+                    print "'%s' already exists." % (self._prefix)
+                    raise StopIteration
 
     def _install_1(self, step, archive, downloader, working_dir, archive_dir,
                    extraction_directory):
@@ -238,7 +273,17 @@ class Config(object):
                     local('hg clone %s %s' %
                           (self.address, extraction_directory))
             elif ('git' == downloader):
-                local('git clone %s %s' % (self.address, extraction_directory))
+                clone_needed = True
+                if (os.path.exists(extraction_directory)):
+                    os.chdir(extraction_directory)
+                    try:
+                        local('git pull')
+                        clone_needed = False
+                    except:
+                        os.remove(extraction_directory)
+                if (clone_needed):
+                    local('git clone %s %s' %
+                          (self.address, extraction_directory))
 
     def _install_2(self, step, extraction_directory):
         """
@@ -263,6 +308,9 @@ class Config(object):
             os.chdir('build')
 
     def _install_3(self, step, extraction_directory):
+        """
+        Step 3: generate makefile (or equivalent)
+        """
         if (3 >= step):
             print 3
             flags = self.flags + ' --prefix=' + self._prefix
@@ -270,17 +318,17 @@ class Config(object):
             if (not os.path.exists(method)):
                 method += '.sh'
             if (self.environment):
-                local(self.environment + ' ' + method + ' ' + flags)
+                local(self.environment + spaced(method) + spaced(flags))
             else:
-                local(method + ' ' + flags)
+                local(method + spaced(flags))
 
     def _install_4(self, step):
+        """
+        Step 4: compile
+        """
         if (4 >= step):
             print 4
-            if (self.maker_flags):
-                local('make ' + self.maker_flags)
-            else:
-                local('make')
+            local('make' + spaced(self.maker_flags))
 
     def _install_3_4_5(self, step, extraction_directory):
         """
@@ -290,14 +338,16 @@ class Config(object):
         Step 5: install (may compile too)
         """
         if (5 >= step):
-            print 5
-            if (self.method in ['configure', 'bootstrap']):
+            if (self.method in ['configure', 'bootstrap', 'make']):
                 local('pwd')
-                self._install_3(step, extraction_directory)
+                if ('make' != self.method):
+                    self._install_3(step, extraction_directory)
                 if ('make' == self.maker):
                     self._install_4(step)
-                    local('make install')
+                    print 5
+                    local('make install' + spaced(self.installer_flags))
                 elif ('b2' == self.maker):
+                    print 5
                     local('./b2 install')
             else:
                 raise ValueError(
@@ -319,7 +369,8 @@ class Config(object):
                 local("touch " + os.path.join(deps_dir, dep.name))
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
-                flags='', maker_flags='', environment='', test=False):
+                flags='', maker_flags='', installer_flags='', environment='',
+                force=False, test=False):
         """
         `destination`: root folder which will contain a directory named
             after the configuration (name is used) where the software will
@@ -329,6 +380,7 @@ class Config(object):
         """
         self._global_flags = flags
         self._global_maker_flags = maker_flags
+        self._global_installer_flags = installer_flags
         self._global_environment = environment
         print 'Start installation at step %i' % step
         archive = self.address.split('/')[-1]
@@ -347,7 +399,7 @@ class Config(object):
         else:
             downloader = 'wget'
         self._prefix = os.path.join(destination, self._name)
-        self._install_0(step)
+        self._install_0(step, force, test)
         if (test):
             return
         if (working_dir is None):
@@ -373,12 +425,13 @@ class RecipeParser(object):
     from schema import Schema, And, Use
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'method': And(str, lambda s: s in ['configure', 'bootstrap']),
+        'method': And(str, lambda s: s in ['configure', 'bootstrap', 'make']),
         'maker': And(str, lambda s: s in ['make', 'b2']),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
         'flags': str,
         'maker_flags': str,
+        'installer_flags': str,
         'dependencies': str,
         'environment': str,
     })
@@ -414,6 +467,7 @@ class RecipeParser(object):
             'build_out_of_sources': True,
             'flags': '',
             'maker_flags': '',
+            'installer_flags': '',
             'dependencies': '',
             'environment': '',
         }
@@ -442,6 +496,9 @@ class RecipeParser(object):
 
     @property
     def graph(self):
+        """
+        Return a graph representation of the dependencies.
+        """
         graph = networkx.DiGraph()
         for recipe in self._cache.values():
             map(lambda x: graph.add_edge(recipe, x), recipe.dependencies)
