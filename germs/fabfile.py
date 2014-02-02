@@ -313,10 +313,18 @@ class Config(object):
         """
         if (3 >= step):
             print 3
-            flags = self.flags + ' --prefix=' + self._prefix
-            method = os.path.join(extraction_directory, self.method)
-            if (not os.path.exists(method)):
-                method += '.sh'
+            if (self.method == 'cmake'):
+                flags = self.flags
+                if (self.build_out_of_sources):
+                    flags += ' .. '
+                flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self._prefix
+                method = self.method
+            else:
+                flags = self.flags + ' --prefix=' + self._prefix
+                method = os.path.join(extraction_directory, self.method)
+                if (not os.path.exists(method)):
+                    if (os.path.exists(method + '.sh')):
+                        method += '.sh'
             if (self.environment):
                 local(self.environment + spaced(method) + spaced(flags))
             else:
@@ -338,7 +346,7 @@ class Config(object):
         Step 5: install (may compile too)
         """
         if (5 >= step):
-            if (self.method in ['configure', 'bootstrap', 'make']):
+            if (self.method in ['configure', 'bootstrap', 'make', 'cmake']):
                 local('pwd')
                 if ('make' != self.method):
                     self._install_3(step, extraction_directory)
@@ -425,7 +433,8 @@ class RecipeParser(object):
     from schema import Schema, And, Use
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'method': And(str, lambda s: s in ['configure', 'bootstrap', 'make']),
+        'method': And(str, lambda s: s in
+			['configure', 'bootstrap', 'make', 'cmake']),
         'maker': And(str, lambda s: s in ['make', 'b2']),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
