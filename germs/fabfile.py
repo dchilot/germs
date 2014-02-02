@@ -46,7 +46,8 @@ def init_path(path_name):
 
 def install(name, destination=None, step=0,
             flags='', maker_flags='', installer_flags='', environment='',
-            force=False, test=False):
+            installer_environment='', force=False, test=False,
+            **override):
     """
     Command to install some software.
     """
@@ -60,12 +61,14 @@ def install(name, destination=None, step=0,
         abort("Destination folder (%s) does not exist." % destination)
     book = RecipeBook()
     cfg_parser = RecipeParser(book)
-    root_config = cfg_parser.parse(name, recursive=True)
+    print 'override =', override
+    root_config = cfg_parser.parse(name, recursive=True, override=override)
     graph = cfg_parser.graph
     graph.add_node(root_config)
     nodes = networkx.topological_sort(graph)
     nodes.reverse()
     ld_library_path = init_path('LD_LIBRARY_PATH')
+    print "ld_library_path", ld_library_path
     library_path = init_path('LIBRARY_PATH')
     path = init_path('PATH')
     roots = []
@@ -94,6 +97,7 @@ def install(name, destination=None, step=0,
                                flags=flags, maker_flags=maker_flags,
                                installer_flags=installer_flags,
                                environment=environment,
+                               installer_environment=installer_environment,
                                force=(force and is_root),
                                test=test)
             except StopIteration:
@@ -161,11 +165,17 @@ class Config(object):
         self._global_maker_flags = ''
         self._global_installer_flags = ''
         self._global_environment = ''
+        self._global_installer_environment = ''
         if (parser is not None):
             deps = self._values['dependencies']
             if (deps):
                 for dependency in deps.split(' '):
                     self._dependencies.add(parser.parse(dependency))
+        try:
+            self._values['address'], _, _ = \
+                self._values['address'].partition('?')
+        except KeyError:
+            pass
 
     def __str__(self):
         return self._name
@@ -216,6 +226,11 @@ class Config(object):
         return self._values['environment'] + spaced(self._global_environment)
 
     @property
+    def installer_environment(self):
+        return self._values['installer_environment'] + \
+            spaced(self._global_installer_environment)
+
+    @property
     def force(self):
         return self._values['force']
 
@@ -226,6 +241,10 @@ class Config(object):
     @property
     def dependencies(self):
         return self._dependencies
+
+    @property
+    def directory(self):
+        return self._values['directory']
 
     def _install_0(self, step, force, test):
         """
@@ -259,6 +278,8 @@ class Config(object):
                 import tarfile
                 tar = tarfile.open(archive)
                 if (not os.path.isdir(extraction_directory)):
+                    print "Extract in '%s'" % extraction_directory
+                    print "Working directory is '%s'" % working_dir
                     tar.extractall(working_dir)
             elif ('hg' == downloader):
                 clone_needed = True
@@ -328,7 +349,11 @@ class Config(object):
         """
         if (4 >= step):
             print 4
-            local('make' + spaced(self.maker_flags))
+            if ('build' == self.maker):
+                maker = 'sh' + spaced(self.maker) + ".sh"
+            else:
+                maker = self.maker
+            local(maker + spaced(self.maker_flags))
 
     def _install_3_4_5(self, step, extraction_directory):
         """
@@ -338,14 +363,28 @@ class Config(object):
         Step 5: install (may compile too)
         """
         if (5 >= step):
-            if (self.method in ['configure', 'bootstrap', 'make']):
+            if (self.method in ['configure', 'bootstrap', 'make', 'build']):
                 local('pwd')
-                if ('make' != self.method):
+                if (self.method not in ['make', 'build']):
                     self._install_3(step, extraction_directory)
-                if ('make' == self.maker):
+                if (self.maker in ['make', 'build']):
                     self._install_4(step)
                     print 5
-                    local('make install' + spaced(self.installer_flags))
+                    print 'self.method =', self.method
+                    if ('build' == self.method):
+                        installer = 'sh ' + self.method + ".sh"
+                        if (not os.path.exists(self._prefix)):
+                            os.mkdir(self._prefix)
+                    elif ('configure' == self.method):
+                        installer = self.maker
+                    else:
+                        installer = self.method
+                    installer += ' install'
+                    if (self.installer_environment):
+                        local(self.installer_environment +
+                              spaced(installer) + spaced(self.installer_flags))
+                    else:
+                        local(installer + spaced(self.installer_flags))
                 elif ('b2' == self.maker):
                     print 5
                     local('./b2 install')
@@ -370,22 +409,29 @@ class Config(object):
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
                 flags='', maker_flags='', installer_flags='', environment='',
-                force=False, test=False):
+                installer_environment='', force=False, test=False):
         """
         `destination`: root folder which will contain a directory named
             after the configuration (name is used) where the software will
             be installed.
         `working_dir`: directory where the sources are extracted.
-        `archive_dir`: directoty where the archive is downloaded.
+        `archive_dir`: directory where the archive is downloaded.
         """
         self._global_flags = flags
         self._global_maker_flags = maker_flags
         self._global_installer_flags = installer_flags
         self._global_environment = environment
+        self._global_installer_environment = installer_environment
         print 'Start installation at step %i' % step
         archive = self.address.split('/')[-1]
-        directory, tar, _ = archive.partition('.tar')
-        is_tar = ('.tar' == tar)
+        is_tar = False
+        for ext in ('.tar', '.tgz'):
+            directory, tar, _ = archive.partition(ext)
+            if (tar):
+                is_tar = True
+                break
+        if (directory.endswith('-src')):
+            directory = directory[:-4]
         if (not is_tar):
             address = self.address.rstrip('/')
             if (address.endswith('hg')):
@@ -398,6 +444,9 @@ class Config(object):
             directory = self._name
         else:
             downloader = 'wget'
+        if (self.directory is not None):
+            # override from configuration
+            directory = self.directory
         self._prefix = os.path.join(destination, self._name)
         self._install_0(step, force, test)
         if (test):
@@ -418,15 +467,18 @@ class Config(object):
 
 class RecipeParser(object):
     """
-    Parses the recipies and store the objects wrapping them (this is used
+    Parses the recipies and stores the objects wrapping them (this is used
     when building a dependency graph).
     """
 
     from schema import Schema, And, Use
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'method': And(str, lambda s: s in ['configure', 'bootstrap', 'make']),
-        'maker': And(str, lambda s: s in ['make', 'b2']),
+        'method': And(str, lambda s: s in ['configure',
+                                           'bootstrap',
+                                           'make',
+                                           'build']) ,
+        'maker': And(str, lambda s: s in ['make', 'b2', 'build']),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
         'flags': str,
@@ -434,6 +486,8 @@ class RecipeParser(object):
         'installer_flags': str,
         'dependencies': str,
         'environment': str,
+        'installer_environment': str,
+        'directory': str,
     })
 
     def __init__(self, recipe_book):
@@ -444,11 +498,15 @@ class RecipeParser(object):
         self._cache = {}
         self._book = recipe_book
 
-    def parse(self, name, recursive=False):
+    def parse(self, name, recursive=False, override=None):
         """
         Parses and validates a recipe.
         `name`: the name of the recipe (not the file).
         `recursive`: if set to True, also parse the dependencies.
+        `override`: dictionary that can contain an override value for each
+        config key. '+...' means something is added, '-...' means something
+        is removed, otherwise the value is just replaced. If there is more
+        than one value, the values have to be separated by commas (',').
         >>> parser = RecipeParser()
         >>> config = parser.parse("gcc-4.8-light")
         >>> print config
@@ -470,18 +528,29 @@ class RecipeParser(object):
             'installer_flags': '',
             'dependencies': '',
             'environment': '',
+            'installer_environment': '',
+            'directory': None,
         }
         for key in config:
             try:
-                config[key] = cfg.get('install', key)
+                value = cfg.get('install', key)
             except ConfigParser.NoOptionError:
                 # keep the default value
-                pass
+                value = config[key]
             except ConfigParser.NoSectionError as exception:
                 abort("Recipe '%s' is corrupted.\n%s" % (recipe, exception))
+            if ((override) and (key in override)):
+                for override_value in override[key].split(','):
+                    if (override_value.startswith('-')):
+                        value = value.replace(override_value, '')
+                    elif (override_value.startswith('+')):
+                        value += override_value
+                    else:
+                        value = override_value
+            config[key] = value
         print 'Recipe parsed.'
-        #print 'config (before)'
-        #print config
+        print 'config (before)'
+        print config
         config = RecipeParser._schema.validate(config)
         #print 'config (after)'
         #print config

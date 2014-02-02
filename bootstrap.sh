@@ -19,4 +19,4 @@ pwd
 virtualenv env
 ls env/bin/activate
 source env/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -M
