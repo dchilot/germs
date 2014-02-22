@@ -355,10 +355,18 @@ class Config(object):
         """
         if (3 >= step):
             print 3
-            flags = self.flags + ' --prefix=' + self._prefix
-            method = os.path.join(extraction_directory, self.method)
-            if (not os.path.exists(method)):
-                method += '.sh'
+            if (self.method == 'cmake'):
+                flags = self.flags
+                if (self.build_out_of_sources):
+                    flags += ' .. '
+                flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self._prefix
+                method = self.method
+            else:
+                flags = self.flags + ' --prefix=' + self._prefix
+                method = os.path.join(extraction_directory, self.method)
+                if (not os.path.exists(method)):
+                    if (os.path.exists(method + '.sh')):
+                        method += '.sh'
             if (self.environment):
                 local_raise_on_error(
                     self.environment + spaced(method) + spaced(flags))
@@ -385,7 +393,8 @@ class Config(object):
         Step 5: install (may compile too)
         """
         if (5 >= step):
-            if (self.method in ['configure', 'bootstrap', 'make', 'build']):
+            if (self.method in
+                    ['configure', 'bootstrap', 'make', 'build', 'cmake']):
                 local_raise_on_error('pwd')
                 if (self.method not in ['make', 'build']):
                     self._install_3(step, extraction_directory)
@@ -498,7 +507,7 @@ class Config(object):
                 print e
                 full_archive_path = os.path.join(archive_dir, archive)
                 if (os.path.exists(full_archive_path)):
-                    os.remove(archive)
+                    os.remove(full_archive_path)
                 if (os.path.exists(full_archive_path)):
                     import shutil
                     shutil.rmtree(extraction_directory)
@@ -518,7 +527,8 @@ class RecipeParser(object):
         'method': And(str, lambda s: s in ['configure',
                                            'bootstrap',
                                            'make',
-                                           'build']) ,
+                                           'build',
+                                           'cmake']) ,
         'maker': And(str, lambda s: s in ['make', 'b2', 'build']),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
