@@ -2,7 +2,15 @@ import os
 import networkx
 from fabric.api import local
 from fabric.api import abort
+from fabric.api import settings
 from fabric.context_managers import prefix
+
+
+def local_raise_on_error(command):
+    with settings(warn_only=True):
+        result = local(command)
+    if (result.failed):
+        raise Exception("command failed: " + command)
 
 
 def get_is_valid_url_ftp(url):
@@ -44,9 +52,19 @@ def init_path(path_name):
     return path_array
 
 
+def build_exports(ld_library_path, library_path, path, roots):
+    exports = 'export'
+    exports += ' LD_LIBRARY_PATH=' + ':'.join(ld_library_path)
+    exports += ' LIBRARY_PATH=' + ':'.join(library_path)
+    exports += ' PATH=' + ':'.join(path)
+    exports += ' ' + ' '.join(roots)
+    print 'exports =', exports
+    return exports
+
+
 def install(name, destination=None, step=0,
             flags='', maker_flags='', installer_flags='', environment='',
-            installer_environment='', force=False, test=False,
+            installer_environment='', force=False, test=False, retries=1,
             **override):
     """
     Command to install some software.
@@ -74,12 +92,7 @@ def install(name, destination=None, step=0,
     roots = []
     has_deps = (len(nodes) > 1)
     for config in nodes:
-        exports = 'export'
-        exports += ' LD_LIBRARY_PATH=' + ':'.join(ld_library_path)
-        exports += ' LIBRARY_PATH=' + ':'.join(library_path)
-        exports += ' PATH=' + ':'.join(path)
-        exports += ' ' + ' '.join(roots)
-        print 'exports =', exports
+        exports = build_exports(ld_library_path, library_path, path, roots)
         with prefix(exports):
             try:
                 is_root = (config is root_config)
@@ -99,7 +112,7 @@ def install(name, destination=None, step=0,
                                environment=environment,
                                installer_environment=installer_environment,
                                force=(force and is_root),
-                               test=test)
+                               test=test, retries=retries)
             except StopIteration:
                 print "No need to install %s" % (config.name)
             full_destination = config.prefix
@@ -219,7 +232,7 @@ class Config(object):
     @property
     def installer_flags(self):
         return self._values['installer_flags'] +\
-                spaced(self._global_installer_flags)
+            spaced(self._global_installer_flags)
 
     @property
     def environment(self):
@@ -274,37 +287,45 @@ class Config(object):
             print 1
             os.chdir(archive_dir)
             if ('wget' == downloader):
-                local("wget -nc --no-check-certificate %s" % self.address)
-                import tarfile
-                tar = tarfile.open(archive)
-                if (not os.path.isdir(extraction_directory)):
-                    print "Extract in '%s'" % extraction_directory
-                    print "Working directory is '%s'" % working_dir
-                    tar.extractall(working_dir)
+                tries = 0
+                done = False
+                while ((not done) and (tries < 3)):
+                    tries += 1
+                    local_raise_on_error("wget -nc --no-check-certificate %s" %
+                                         self.address)
+                    import tarfile
+                    #try:
+                    tar = tarfile.open(archive)
+                    if (not os.path.isdir(extraction_directory)):
+                        tar.extractall(working_dir)
+                    done = True
+                    #except Exception as e:
+                        #print e
+                        #os.remove(archive)
             elif ('hg' == downloader):
                 clone_needed = True
                 if (os.path.exists(extraction_directory)):
                     os.chdir(extraction_directory)
                     try:
-                        local('hg pull && hg update')
+                        local_raise_on_error('hg pull && hg update')
                         clone_needed = False
                     except:
                         os.remove(extraction_directory)
                 if (clone_needed):
-                    local('hg clone %s %s' %
-                          (self.address, extraction_directory))
+                    local_raise_on_error('hg clone %s %s' %
+                                         (self.address, extraction_directory))
             elif ('git' == downloader):
                 clone_needed = True
                 if (os.path.exists(extraction_directory)):
                     os.chdir(extraction_directory)
                     try:
-                        local('git pull')
+                        local_raise_on_error('git pull')
                         clone_needed = False
                     except:
                         os.remove(extraction_directory)
                 if (clone_needed):
-                    local('git clone %s %s' %
-                          (self.address, extraction_directory))
+                    local_raise_on_error('git clone %s %s' %
+                                         (self.address, extraction_directory))
 
     def _install_2(self, step, extraction_directory):
         """
@@ -318,12 +339,12 @@ class Config(object):
                 try:
                     #import shutil
                     #shutil.rmtree('build')
-                    local('rm -rf build')
+                    local_raise_on_error('rm -rf build')
                 except:
                     pass
                 try:
                     #os.mkdir('build')
-                    local('mkdir build')
+                    local_raise_on_error('mkdir build')
                 except OSError:
                     pass
             os.chdir('build')
@@ -339,9 +360,10 @@ class Config(object):
             if (not os.path.exists(method)):
                 method += '.sh'
             if (self.environment):
-                local(self.environment + spaced(method) + spaced(flags))
+                local_raise_on_error(
+                    self.environment + spaced(method) + spaced(flags))
             else:
-                local(method + spaced(flags))
+                local_raise_on_error(method + spaced(flags))
 
     def _install_4(self, step):
         """
@@ -353,7 +375,7 @@ class Config(object):
                 maker = 'sh' + spaced(self.maker) + ".sh"
             else:
                 maker = self.maker
-            local(maker + spaced(self.maker_flags))
+            local_raise_on_error(maker + spaced(self.maker_flags))
 
     def _install_3_4_5(self, step, extraction_directory):
         """
@@ -364,7 +386,7 @@ class Config(object):
         """
         if (5 >= step):
             if (self.method in ['configure', 'bootstrap', 'make', 'build']):
-                local('pwd')
+                local_raise_on_error('pwd')
                 if (self.method not in ['make', 'build']):
                     self._install_3(step, extraction_directory)
                 if (self.maker in ['make', 'build']):
@@ -381,13 +403,15 @@ class Config(object):
                         installer = self.method
                     installer += ' install'
                     if (self.installer_environment):
-                        local(self.installer_environment +
-                              spaced(installer) + spaced(self.installer_flags))
+                        local_raise_on_error(
+                            self.installer_environment +
+                            spaced(installer) + spaced(self.installer_flags))
                     else:
-                        local(installer + spaced(self.installer_flags))
+                        local_raise_on_error(
+                            installer + spaced(self.installer_flags))
                 elif ('b2' == self.maker):
                     print 5
-                    local('./b2 install')
+                    local_raise_on_error('./b2 install')
             else:
                 raise ValueError(
                     "Do not know how to install with method '%s'." %
@@ -403,13 +427,14 @@ class Config(object):
                 #os.mkdir(deps_dir)
             #except OSError:
                 #pass
-            local('mkdir -p ' + deps_dir)
+            local_raise_on_error('mkdir -p ' + deps_dir)
             for dep in self.dependencies:
-                local("touch " + os.path.join(deps_dir, dep.name))
+                local_raise_on_error("touch " +
+                                     os.path.join(deps_dir, dep.name))
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
                 flags='', maker_flags='', installer_flags='', environment='',
-                installer_environment='', force=False, test=False):
+                installer_environment='', force=False, test=False, retries=1):
         """
         `destination`: root folder which will contain a directory named
             after the configuration (name is used) where the software will
@@ -458,11 +483,27 @@ class Config(object):
             import tempfile
             archive_dir = tempfile.gettempdir()
         extraction_directory = os.path.join(working_dir, directory)
-        self._install_1(step, archive, downloader, working_dir, archive_dir,
-                        extraction_directory)
-        self._install_2(step, extraction_directory)
-        self._install_3_4_5(step, extraction_directory)
-        self._install_6(step)
+        tries = 0
+        done = 0
+        while ((not done) and (tries < retries)):
+            try:
+                self._install_1(step, archive, downloader, working_dir,
+                                archive_dir, extraction_directory)
+                self._install_2(step, extraction_directory)
+                self._install_3_4_5(step, extraction_directory)
+                self._install_6(step)
+                done = True
+            except Exception as e:
+                tries += 1
+                print e
+                full_archive_path = os.path.join(archive_dir, archive)
+                if (os.path.exists(full_archive_path)):
+                    os.remove(archive)
+                if (os.path.exists(full_archive_path)):
+                    import shutil
+                    shutil.rmtree(extraction_directory)
+        if (not done):
+            raise Exception("Abort on failure")
 
 
 class RecipeParser(object):
