@@ -444,7 +444,7 @@ class Config(object):
             directory = self._name
         else:
             downloader = 'wget'
-        if (self.directory is not None):
+        if (self.directory):
             # override from configuration
             directory = self.directory
         self._prefix = os.path.join(destination, self._name)
@@ -529,7 +529,7 @@ class RecipeParser(object):
             'dependencies': '',
             'environment': '',
             'installer_environment': '',
-            'directory': None,
+            'directory': '',
         }
         for key in config:
             try:
