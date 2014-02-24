@@ -63,14 +63,29 @@ def build_exports(ld_library_path, library_path, path, roots):
 
 
 def install(name, destination=None, step=0,
-            flags='', maker_flags='', installer_flags='', environment='',
-            installer_environment='', force=False, test=False, retries=1,
+            global_flags='',
+            global_maker_flags='',
+            global_installer_flags='',
+            global_environment='',
+            global_installer_environment='',
+            force=False, test=False, retries=1,
+            delete_archive=False, delete_extraction=False, repositories=None,
             **override):
     """
     Command to install some software.
     """
     if (destination is None):
         destination = os.path.join(os.environ["HOME"], "env")
+    if (repositories is None):
+        repositories = []
+    else:
+        tmp_repos = []
+        for repo in repositories.split(";"):
+            if (os.path.isdir(repo)):
+                tmp_repos.append(repo)
+            else:
+                print 'Discarded repository', repo
+        repositories = tmp_repos
     print "install", name, "in", destination
 
     from schema import Schema, Use
@@ -107,12 +122,16 @@ def install(name, destination=None, step=0,
                 # We do not want to force dependencies to be reinstalled
                 # if force=True is used so we only do it when is_root is True.
                 config.install(destination, step=local_step,
-                               flags=flags, maker_flags=maker_flags,
-                               installer_flags=installer_flags,
-                               environment=environment,
-                               installer_environment=installer_environment,
+                               global_flags=global_flags,
+                               global_maker_flags=global_maker_flags,
+                               global_installer_flags=global_installer_flags,
+                               global_environment=global_environment,
+                               global_installer_environment=global_installer_environment,
                                force=(force and is_root),
-                               test=test, retries=retries)
+                               test=test, retries=retries,
+                               delete_archive=delete_archive,
+                               delete_extraction=delete_extraction,
+                               repositories=repositories)
             except StopIteration:
                 print "No need to install %s" % (config.name)
             full_destination = config.prefix
@@ -189,6 +208,19 @@ class Config(object):
                 self._values['address'].partition('?')
         except KeyError:
             pass
+
+    def _replace_in_values(self, mapping):
+        '''
+        Expand values from #_values using the python #format method.
+        `mapping`: dictionary that contains the mapping for the #format
+          method to perform its substitutions.
+        '''
+        import six
+        for key, value in self._values.items():
+            if (isinstance(value, six.string_types)):
+                new_value = value.format(**mapping)
+                if (new_value != value):
+                    self._values[key] = new_value
 
     def __str__(self):
         return self._name
@@ -381,6 +413,7 @@ class Config(object):
             print 4
             if ('build' == self.maker):
                 maker = 'sh' + spaced(self.maker) + ".sh"
+                maker += ' --prefix=' + self._prefix
             else:
                 maker = self.maker
             local_raise_on_error(maker + spaced(self.maker_flags))
@@ -420,7 +453,9 @@ class Config(object):
                             installer + spaced(self.installer_flags))
                 elif ('b2' == self.maker):
                     print 5
-                    local_raise_on_error('./b2 install')
+                    local_raise_on_error(
+                        './b2 install' +
+                        spaced(self.installer_flags))
             else:
                 raise ValueError(
                     "Do not know how to install with method '%s'." %
@@ -442,8 +477,14 @@ class Config(object):
                                      os.path.join(deps_dir, dep.name))
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
-                flags='', maker_flags='', installer_flags='', environment='',
-                installer_environment='', force=False, test=False, retries=1):
+                global_flags='',
+                global_maker_flags='',
+                global_installer_flags='',
+                global_environment='',
+                global_installer_environment='',
+                force=False, test=False, retries=1,
+                delete_archive=False, delete_extraction=False,
+                repositories=None):
         """
         `destination`: root folder which will contain a directory named
             after the configuration (name is used) where the software will
@@ -451,11 +492,13 @@ class Config(object):
         `working_dir`: directory where the sources are extracted.
         `archive_dir`: directory where the archive is downloaded.
         """
-        self._global_flags = flags
-        self._global_maker_flags = maker_flags
-        self._global_installer_flags = installer_flags
-        self._global_environment = environment
-        self._global_installer_environment = installer_environment
+        self._destination = destination
+        self._global_flags = global_flags
+        self._global_maker_flags = global_maker_flags
+        self._global_installer_flags = global_installer_flags
+        self._global_environment = global_environment
+        self._global_installer_environment = global_installer_environment
+        self._repositories = repositories
         print 'Start installation at step %i' % step
         archive = self.address.split('/')[-1]
         is_tar = False
@@ -481,7 +524,15 @@ class Config(object):
         if (self.directory):
             # override from configuration
             directory = self.directory
-        self._prefix = os.path.join(destination, self._name)
+        prefixes = [os.path.join(repo, self._name)
+                          for repo in repositories]
+        for prefix in prefixes:
+            if (os.path.exists(prefix)):
+                print 'Prefix:', prefix
+                self._prefix = prefix
+                break
+        if (self._prefix is None):
+            self._prefix = os.path.join(destination, self._name)
         self._install_0(step, force, test)
         if (test):
             return
@@ -492,6 +543,7 @@ class Config(object):
             import tempfile
             archive_dir = tempfile.gettempdir()
         extraction_directory = os.path.join(working_dir, directory)
+        self._replace_in_values({ 'prefix': self._prefix })
         tries = 0
         done = 0
         while ((not done) and (tries < retries)):
@@ -507,10 +559,12 @@ class Config(object):
                 print e
                 full_archive_path = os.path.join(archive_dir, archive)
                 if (os.path.exists(full_archive_path)):
-                    os.remove(full_archive_path)
-                if (os.path.exists(full_archive_path)):
-                    import shutil
-                    shutil.rmtree(extraction_directory)
+                    if (delete_archive):
+                        os.remove(full_archive_path)
+                if (os.path.exists(extraction_directory)):
+                    if (delete_extraction):
+                        import shutil
+                        shutil.rmtree(extraction_directory)
         if (not done):
             raise Exception("Abort on failure")
 
