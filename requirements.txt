@@ -1,7 +1,11 @@
+## The following requirements were added by pip --freeze:
 Fabric==1.6.0
+argparse==1.2.1
+distribute==0.6.24
 networkx==1.7
 paramiko==1.10.1
 pycrypto==2.6
 requests==1.2.0
 schema==0.2.0
+six==1.5.2
 wsgiref==0.1.2
