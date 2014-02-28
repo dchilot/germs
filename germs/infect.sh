@@ -1,7 +1,7 @@
 
 function infect()
 # $1: directory in $INFECTION_ROOT to add to the paths
-# $2: r or recursive to also treat dependencies
+# $2: "front" to prepend to the paths (default is to append)
 {
 	local _gloubi_clean_INFECTION_ROOT=
 	local _gloubi_selected="$1"
@@ -45,7 +45,11 @@ function infect()
 		for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
 			_gloubi_infect_path $1/lib $lib_path && _infected=1
 			_gloubi_infect_path $1/lib64 $lib_path && _infected=1
+			_gloubi_infect_path $1/lib/pkgconfig $lib_path && _infected=1
+			_gloubi_infect_path $1/lib64/pkgconfig $lib_path && _infected=1
 		done
+		_gloubi_infect_path $1/lib/pkgconfig PKG_CONFIG_PATH && _infected=1
+		_gloubi_infect_path $1/lib64/pkgconfig PKG_CONFIG_PATH && _infected=1
 		for mandir in $(find "$1" -type d -name man -prune) ; do
 			_gloubi_infect_path "$1/$mandir" MANPATH && _infected=1
 		done

@@ -52,8 +52,9 @@ def init_path(path_name):
     return path_array
 
 
-def build_exports(ld_library_path, library_path, path, roots):
+def build_exports(pkg_config_path, ld_library_path, library_path, path, roots):
     exports = 'export'
+    exports += ' PKG_CONFIG_PATH=' + ':'.join(pkg_config_path)
     exports += ' LD_LIBRARY_PATH=' + ':'.join(ld_library_path)
     exports += ' LIBRARY_PATH=' + ':'.join(library_path)
     exports += ' PATH=' + ':'.join(path)
@@ -100,6 +101,7 @@ def install(name, destination=None, step=0,
     graph.add_node(root_config)
     nodes = networkx.topological_sort(graph)
     nodes.reverse()
+    pkg_config_path = init_path('PKG_CONFIG_PATH')
     ld_library_path = init_path('LD_LIBRARY_PATH')
     print "ld_library_path", ld_library_path
     library_path = init_path('LIBRARY_PATH')
@@ -107,7 +109,8 @@ def install(name, destination=None, step=0,
     roots = []
     has_deps = (len(nodes) > 1)
     for config in nodes:
-        exports = build_exports(ld_library_path, library_path, path, roots)
+        exports = build_exports(
+            pkg_config_path, ld_library_path, library_path, path, roots)
         with prefix(exports):
             try:
                 is_root = (config is root_config)
@@ -121,17 +124,19 @@ def install(name, destination=None, step=0,
                 #local('echo "local_step=%s"' % local_step)
                 # We do not want to force dependencies to be reinstalled
                 # if force=True is used so we only do it when is_root is True.
-                config.install(destination, step=local_step,
-                               global_flags=global_flags,
-                               global_maker_flags=global_maker_flags,
-                               global_installer_flags=global_installer_flags,
-                               global_environment=global_environment,
-                               global_installer_environment=global_installer_environment,
-                               force=(force and is_root),
-                               test=test, retries=retries,
-                               delete_archive=delete_archive,
-                               delete_extraction=delete_extraction,
-                               repositories=repositories)
+                config.install(
+                    destination,
+                    step=local_step,
+                    global_flags=global_flags,
+                    global_maker_flags=global_maker_flags,
+                    global_installer_flags=global_installer_flags,
+                    global_environment=global_environment,
+                    global_installer_environment=global_installer_environment,
+                    force=(force and is_root),
+                    test=test, retries=retries,
+                    delete_archive=delete_archive,
+                    delete_extraction=delete_extraction,
+                    repositories=repositories)
             except StopIteration:
                 print "No need to install %s" % (config.name)
             full_destination = config.prefix
@@ -140,12 +145,13 @@ def install(name, destination=None, step=0,
                 continue
             for sub_dir in os.listdir(full_destination):
                 if (sub_dir in ['lib', 'lib64']):
-                    ld_library_path.insert(
-                        0,
-                        os.path.join(full_destination, sub_dir))
-                    library_path.insert(
-                        0,
-                        os.path.join(full_destination, sub_dir))
+                    lib_dir = os.path.join(full_destination, sub_dir)
+                    for pkg_sub_dir in os.listdir(lib_dir):
+                        if ("pkgconfig" == pkg_sub_dir):
+                            pkg_dir = os.path.join(lib_dir, pkg_sub_dir)
+                            pkg_config_path.insert(0, pkg_dir)
+                    ld_library_path.insert(0, lib_dir)
+                    library_path.insert(0, lib_dir)
                 elif (sub_dir in ['bin']):
                     path.insert(
                         0,
@@ -161,6 +167,11 @@ class RecipeBook(object):
         self._root = os.path.dirname(os.path.abspath(__file__))
 
     def locate(self, recipe):
+        """
+        Abort if the file #recipe + ".cfg" is not found in the recipies
+        directory.
+        Return the full path to the recipe otherwise.
+        """
         recipe = os.path.join(self._root, "recipies", recipe + ".cfg")
         if (not os.path.exists(recipe)):
             print "recipe =", recipe

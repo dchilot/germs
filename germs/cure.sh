@@ -32,6 +32,8 @@ function cure()
 			_gloubi_cure_path $1/lib $lib_path
 			_gloubi_cure_path $1/lib64 $lib_path
 		done
+		_gloubi_cure_path $1/lib/pkgconfig PKG_CONFIG_PATH
+		_gloubi_cure_path $1/lib64/pkgconfig PKG_CONFIG_PATH
 		for mandir in $(find "$1" -type d -name man -prune) ; do
 			_gloubi_cure_path "$1/$mandir" MANPATH
 		done
