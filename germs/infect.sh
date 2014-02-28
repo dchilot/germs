@@ -40,18 +40,22 @@ function infect()
 	function _gloubi_infect()
 	{
 		local _infected=
-		_gloubi_infect_path $1/sbin PATH && _infected=1
-		_gloubi_infect_path $1/bin PATH && _infected=1
-		for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
-			_gloubi_infect_path $1/lib $lib_path && _infected=1
-			_gloubi_infect_path $1/lib64 $lib_path && _infected=1
-			_gloubi_infect_path $1/lib/pkgconfig $lib_path && _infected=1
-			_gloubi_infect_path $1/lib64/pkgconfig $lib_path && _infected=1
-		done
-		_gloubi_infect_path $1/lib/pkgconfig PKG_CONFIG_PATH && _infected=1
-		_gloubi_infect_path $1/lib64/pkgconfig PKG_CONFIG_PATH && _infected=1
-		for mandir in $(find "$1" -type d -name man -prune) ; do
-			_gloubi_infect_path "$1/$mandir" MANPATH && _infected=1
+		for idir in "$1" "$1/usr" ; do
+			if [ -d "$idir" ] ; then
+				_gloubi_infect_path $idir/sbin PATH && _infected=1
+				_gloubi_infect_path $idir/bin PATH && _infected=1
+				for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
+					_gloubi_infect_path $idir/lib $lib_path && _infected=1
+					_gloubi_infect_path $idir/lib64 $lib_path && _infected=1
+					_gloubi_infect_path $idir/lib/pkgconfig $lib_path && _infected=1
+					_gloubi_infect_path $idir/lib64/pkgconfig $lib_path && _infected=1
+				done
+				_gloubi_infect_path $idir/lib/pkgconfig PKG_CONFIG_PATH && _infected=1
+				_gloubi_infect_path $idir/lib64/pkgconfig PKG_CONFIG_PATH && _infected=1
+				for mandir in $(find "$idir" -type d -name man -prune) ; do
+					_gloubi_infect_path "$idir/$mandir" MANPATH && _infected=1
+				done
+			fi
 		done
 		if [ -d "$1/deps" ] ; then
 			for dep in $1/deps/* ; do

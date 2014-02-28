@@ -24,18 +24,22 @@ function cure()
 
 	function _gloubi_cure()
 	{
-		_gloubi_cure_path $1/sbin PATH
-		_gloubi_cure_path $1/bin PATH
-		_gloubi_cure_path $1/lib LD_LIBRARY_PATH
-		_gloubi_cure_path $1/lib64 LD_LIBRARY_PATH
-		for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
-			_gloubi_cure_path $1/lib $lib_path
-			_gloubi_cure_path $1/lib64 $lib_path
-		done
-		_gloubi_cure_path $1/lib/pkgconfig PKG_CONFIG_PATH
-		_gloubi_cure_path $1/lib64/pkgconfig PKG_CONFIG_PATH
-		for mandir in $(find "$1" -type d -name man -prune) ; do
-			_gloubi_cure_path "$1/$mandir" MANPATH
+		for idir in "$1" "$1/usr" ; do
+			if [ -d "$idir" ] ; then
+				_gloubi_cure_path $idir/sbin PATH
+				_gloubi_cure_path $idir/bin PATH
+				_gloubi_cure_path $idir/lib LD_LIBRARY_PATH
+				_gloubi_cure_path $idir/lib64 LD_LIBRARY_PATH
+				for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
+					_gloubi_cure_path $idir/lib $lib_path
+					_gloubi_cure_path $idir/lib64 $lib_path
+				done
+				_gloubi_cure_path $idir/lib/pkgconfig PKG_CONFIG_PATH
+				_gloubi_cure_path $idir/lib64/pkgconfig PKG_CONFIG_PATH
+				for mandir in $(find "$idir" -type d -name man -prune) ; do
+					_gloubi_cure_path "$idir/$mandir" MANPATH
+				done
+			fi
 		done
 		if [ -n "$_gloubi_recursive_cure" ] ; then
 			if [ -d "$1/deps" ] ; then
