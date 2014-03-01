@@ -466,7 +466,7 @@ class Config(object):
                             os.mkdir(self._prefix)
                     elif ('configure' == self.method):
                         installer = self.maker
-                    elif ('autogen' == self.method):
+                    elif (self.method in ['cmake', 'autogen']):
                         installer = 'make'
                     else:
                         installer = self.method
@@ -552,7 +552,7 @@ class Config(object):
             # override from configuration
             directory = self.directory
         prefixes = [os.path.join(repo, self._name)
-                          for repo in repositories]
+                    for repo in repositories]
         for prefix in prefixes:
             if (os.path.exists(prefix)):
                 print 'Prefix:', prefix
