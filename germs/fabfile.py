@@ -392,21 +392,28 @@ class Config(object):
                     pass
             os.chdir('build')
 
-    def _install_3(self, step, extraction_directory):
+    def _install_3(self, step, extraction_directory, forced_method=None):
         """
         Step 3: generate makefile (or equivalent)
         """
         if (3 >= step):
-            print 3
-            if (self.method == 'cmake'):
+            if (forced_method):
+                print 3, "(forced)"
+                used_method = forced_method
+            else:
+                print 3
+                used_method = self.method
+            if (used_method == 'cmake'):
                 flags = self.flags
                 if (self.build_out_of_sources):
                     flags += ' .. '
                 flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self._prefix
-                method = self.method
+                method = used_method
             else:
-                flags = self.flags + ' --prefix=' + self._prefix
-                method = os.path.join(extraction_directory, self.method)
+                flags = self.flags
+                if (used_method != 'autogen'):
+                    flags += ' --prefix=' + self._prefix
+                method = os.path.join(extraction_directory, used_method)
                 if (not os.path.exists(method)):
                     if (os.path.exists(method + '.sh')):
                         method += '.sh'
@@ -415,6 +422,8 @@ class Config(object):
                     self.environment + spaced(method) + spaced(flags))
             else:
                 local_raise_on_error(method + spaced(flags))
+            if (('autogen' == used_method) and (not forced_method)):
+                self._install_3(step, extraction_directory, 'configure')
 
     def _install_4(self, step):
         """
@@ -438,7 +447,12 @@ class Config(object):
         """
         if (5 >= step):
             if (self.method in
-                    ['configure', 'bootstrap', 'make', 'build', 'cmake']):
+                    ['autogen',
+                     'configure',
+                     'bootstrap',
+                     'make',
+                     'build',
+                     'cmake']):
                 local_raise_on_error('pwd')
                 if (self.method not in ['make', 'build']):
                     self._install_3(step, extraction_directory)
@@ -452,6 +466,8 @@ class Config(object):
                             os.mkdir(self._prefix)
                     elif ('configure' == self.method):
                         installer = self.maker
+                    elif ('autogen' == self.method):
+                        installer = 'make'
                     else:
                         installer = self.method
                     installer += ' install'
@@ -589,11 +605,12 @@ class RecipeParser(object):
     from schema import Schema, And, Use
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'method': And(str, lambda s: s in ['configure',
+        'method': And(str, lambda s: s in ['autogen',
+                                           'configure',
                                            'bootstrap',
                                            'make',
                                            'build',
-                                           'cmake']) ,
+                                           'cmake']),
         'maker': And(str, lambda s: s in ['make', 'b2', 'build']),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
