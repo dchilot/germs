@@ -1,4 +1,4 @@
 germs
 =====
 
-A bunch of script to twaek the different (GNU/Linux) paths
+A bunch of script to tweak the different (GNU/Linux) paths
