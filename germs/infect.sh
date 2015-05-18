@@ -40,6 +40,13 @@ function infect()
 	function _gloubi_infect()
 	{
 		local _infected=
+		if [ -n "$_gloubi_push_front" ] ; then
+			if [ -d "$1/deps" ] ; then
+				for dep in $1/deps/* ; do
+					infect ${dep##*/} front
+				done
+			fi
+		fi
 		for idir in "$1" "$1/usr" ; do
 			if [ -d "$idir" ] ; then
 				_gloubi_infect_path $idir/sbin PATH && _infected=1
@@ -57,10 +64,12 @@ function infect()
 				done
 			fi
 		done
-		if [ -d "$1/deps" ] ; then
-			for dep in $1/deps/* ; do
-				infect ${dep##*/}
-			done
+		if [ -z "$_gloubi_push_front" ] ; then
+			if [ -d "$1/deps" ] ; then
+				for dep in $1/deps/* ; do
+					infect ${dep##*/}
+				done
+			fi
 		fi
 		if [ -z "$_infected" ] ; then
 			echo "could not infect $1" >&2
@@ -77,5 +86,6 @@ function infect()
 	if [ -n "$_gloubi_clean_INFECTION_ROOT" ] ; then
 		unset INFECTION_ROOT
 	fi
+	hash -r
 }
 

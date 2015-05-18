@@ -33,6 +33,8 @@ function cure()
 				for lib_path in LD_LIBRARY_PATH LIBRARY_PATH ; do
 					_gloubi_cure_path $idir/lib $lib_path
 					_gloubi_cure_path $idir/lib64 $lib_path
+					_gloubi_cure_path $idir/lib/pkgconfig $lib_path
+					_gloubi_cure_path $idir/lib64/pkgconfig $lib_path
 				done
 				_gloubi_cure_path $idir/lib/pkgconfig PKG_CONFIG_PATH
 				_gloubi_cure_path $idir/lib64/pkgconfig PKG_CONFIG_PATH
@@ -60,5 +62,6 @@ function cure()
 	if [ -n "$_gloubi_clean_INFECTION_ROOT" ] ; then
 		unset INFECTION_ROOT
 	fi
+	hash -r
 }
 
