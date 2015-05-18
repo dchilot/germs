@@ -3,12 +3,12 @@ import networkx
 from fabric.api import local
 from fabric.api import abort
 from fabric.api import settings
-from fabric.context_managers import prefix
+import fabric.context_managers
 
 
-def local_raise_on_error(command):
+def local_raise_on_error(command, shell=None):
     with settings(warn_only=True):
-        result = local(command)
+        result = local(command, shell=shell)
     if (result.failed):
         raise Exception("command failed: " + command)
 
@@ -68,9 +68,10 @@ def install(name, destination=None, step=0,
             global_maker_flags='',
             global_installer_flags='',
             global_environment='',
-            global_installer_environment='',
+            g_installer_environment='',
             force=False, test=False, retries=1,
             delete_archive=False, delete_extraction=False, repositories=None,
+            virtualenv='',
             **override):
     """
     Command to install some software.
@@ -108,54 +109,60 @@ def install(name, destination=None, step=0,
     path = init_path('PATH')
     roots = []
     has_deps = (len(nodes) > 1)
+    if (virtualenv):
+        virtualenv = 'source ' + os.path.join(virtualenv, 'bin', 'activate')
+    else:
+        virtualenv = 'true'
     for config in nodes:
         exports = build_exports(
             pkg_config_path, ld_library_path, library_path, path, roots)
-        with prefix(exports):
-            try:
-                is_root = (config is root_config)
-                local_step = step if (is_root) else 0
-                if (is_root):
-                    if (has_deps):
-                        print "All dependencies installed"
-                        print "Back to installing %s" % config.name
-                else:
-                    print "Install dependency: %s" % config.name
-                #local('echo "local_step=%s"' % local_step)
-                # We do not want to force dependencies to be reinstalled
-                # if force=True is used so we only do it when is_root is True.
-                config.install(
-                    destination,
-                    step=local_step,
-                    global_flags=global_flags,
-                    global_maker_flags=global_maker_flags,
-                    global_installer_flags=global_installer_flags,
-                    global_environment=global_environment,
-                    global_installer_environment=global_installer_environment,
-                    force=(force and is_root),
-                    test=test, retries=retries,
-                    delete_archive=delete_archive,
-                    delete_extraction=delete_extraction,
-                    repositories=repositories)
-            except StopIteration:
-                print "No need to install %s" % (config.name)
-            full_destination = config.prefix
-            roots.append('ROOT_' + config.varname + '=' + full_destination)
-            if (test):
-                continue
-            for sub_dir in os.listdir(full_destination):
-                if (sub_dir in ['lib', 'lib64']):
-                    lib_dir = os.path.join(full_destination, sub_dir)
-                    for pkg_sub_dir in os.listdir(lib_dir):
-                        if ("pkgconfig" == pkg_sub_dir):
-                            pkg_dir = os.path.join(lib_dir, pkg_sub_dir)
-                            pkg_config_path.insert(0, pkg_dir)
-                    ld_library_path.insert(0, lib_dir)
-                    library_path.insert(0, lib_dir)
-                elif (sub_dir in ['bin']):
-                    path.insert(
-                        0,
-                        os.path.join(full_destination, sub_dir))
+        with fabric.context_managers.prefix(exports):
+            with fabric.context_managers.prefix(virtualenv):
+                try:
+                    is_root = (config is root_config)
+                    local_step = step if (is_root) else 0
+                    if (is_root):
+                        if (has_deps):
+                            print "All dependencies installed"
+                            print "Back to installing %s" % config.name
+                    else:
+                        print "Install dependency: %s" % config.name
+                    #local('echo "local_step=%s"' % local_step)
+                    # We do not want to force dependencies to be reinstalled
+                    # if force=True is used so we only do it
+                    # when is_root is True.
+                    config.install(
+                        destination,
+                        step=local_step,
+                        global_flags=global_flags,
+                        global_maker_flags=global_maker_flags,
+                        global_installer_flags=global_installer_flags,
+                        global_environment=global_environment,
+                        g_installer_environment=g_installer_environment,
+                        force=(force and is_root),
+                        test=test, retries=retries,
+                        delete_archive=delete_archive,
+                        delete_extraction=delete_extraction,
+                        repositories=repositories)
+                except StopIteration:
+                    print "No need to install %s" % (config.name)
+                full_destination = config.prefix
+                roots.append('ROOT_' + config.varname + '=' + full_destination)
+                if (test):
+                    continue
+                for sub_dir in os.listdir(full_destination):
+                    if (sub_dir in ['lib', 'lib64']):
+                        lib_dir = os.path.join(full_destination, sub_dir)
+                        for pkg_sub_dir in os.listdir(lib_dir):
+                            if ("pkgconfig" == pkg_sub_dir):
+                                pkg_dir = os.path.join(lib_dir, pkg_sub_dir)
+                                pkg_config_path.insert(0, pkg_dir)
+                        ld_library_path.insert(0, lib_dir)
+                        library_path.insert(0, lib_dir)
+                    elif (sub_dir in ['bin']):
+                        path.insert(
+                            0,
+                            os.path.join(full_destination, sub_dir))
 
 
 class RecipeBook(object):
@@ -253,6 +260,13 @@ class Config(object):
         return self._recipe
 
     @property
+    def shell(self):
+        if (not self._values['shell']):
+            return None
+        else:
+            return self._values['shell']
+
+    @property
     def address(self):
         return self._values['address']
 
@@ -302,6 +316,14 @@ class Config(object):
     def directory(self):
         return self._values['directory']
 
+    @property
+    def skip_gen(self):
+        return self._values['skip_gen']
+
+    @property
+    def skip_build(self):
+        return self._values['skip_build']
+
     def _install_0(self, step, force, test):
         """
         Step 0: Check if the recipe has been installed.
@@ -334,8 +356,17 @@ class Config(object):
                 done = False
                 while ((not done) and (tries < 3)):
                     tries += 1
-                    local_raise_on_error("wget -nc --no-check-certificate %s" %
-                                         self.address)
+                    down = "wget -nc --no-check-certificate " + self.address
+                    local_raise_on_error(down, self.shell)
+                    if (archive.endswith(".xz")):
+                        local_raise_on_error("xz -d %s" % archive, self.shell)
+                        archive = archive[:-3]
+                    # hack for github (wget removes the .tar.gz)
+                    if (not os.path.exists(archive)):
+                        archive = archive[:archive.rfind('.')]
+                        if (not os.path.exists(archive)):
+                            archive = archive[:archive.rfind('.')]
+                    print "archive=" + str(archive)
                     import tarfile
                     #try:
                     tar = tarfile.open(archive)
@@ -350,25 +381,28 @@ class Config(object):
                 if (os.path.exists(extraction_directory)):
                     os.chdir(extraction_directory)
                     try:
-                        local_raise_on_error('hg pull && hg update')
+                        local_raise_on_error(
+                            'hg pull && hg update', self.shell)
                         clone_needed = False
                     except:
                         os.remove(extraction_directory)
                 if (clone_needed):
                     local_raise_on_error('hg clone %s %s' %
-                                         (self.address, extraction_directory))
+                                         (self.address, extraction_directory),
+                                         self.shell)
             elif ('git' == downloader):
                 clone_needed = True
                 if (os.path.exists(extraction_directory)):
                     os.chdir(extraction_directory)
                     try:
-                        local_raise_on_error('git pull')
+                        local_raise_on_error('git pull', self.shell)
                         clone_needed = False
                     except:
                         os.remove(extraction_directory)
                 if (clone_needed):
                     local_raise_on_error('git clone %s %s' %
-                                         (self.address, extraction_directory))
+                                         (self.address, extraction_directory),
+                                         self.shell)
 
     def _install_2(self, step, extraction_directory):
         """
@@ -382,46 +416,89 @@ class Config(object):
                 try:
                     #import shutil
                     #shutil.rmtree('build')
-                    local_raise_on_error('rm -rf build')
+                    local_raise_on_error('rm -rf build_42', self.shell)
                 except:
                     pass
                 try:
                     #os.mkdir('build')
-                    local_raise_on_error('mkdir build')
+                    local_raise_on_error('mkdir build_42', self.shell)
                 except OSError:
                     pass
-            os.chdir('build')
+            os.chdir('build_42')
 
     def _install_3(self, step, extraction_directory, forced_method=None):
         """
         Step 3: generate makefile (or equivalent)
         """
         if (3 >= step):
+            if (self.skip_gen):
+                print "(skip 3)"
+                return
             if (forced_method):
                 print 3, "(forced)"
                 used_method = forced_method
             else:
                 print 3
                 used_method = self.method
+            flags = self.flags
             if (used_method == 'cmake'):
-                flags = self.flags
                 if (self.build_out_of_sources):
                     flags += ' .. '
                 flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self._prefix
                 method = used_method
+            elif (used_method == 'shell'):
+                method = "sh " + self._recipe + ".gen.sh"
+            elif (used_method == 'python_setup'):
+                method = "python setup.py config"
             else:
-                flags = self.flags
                 if (used_method != 'autogen'):
                     flags += ' --prefix=' + self._prefix
                 method = os.path.join(extraction_directory, used_method)
                 if (not os.path.exists(method)):
                     if (os.path.exists(method + '.sh')):
                         method += '.sh'
+                    else:
+                        matches = {}
+                        for root, dirnames, filenames in os.walk(
+                                extraction_directory):
+                            for filename in filenames:
+                                if (used_method == filename):
+                                    length = len(root.split(os.path.sep))
+                                    if (length not in matches):
+                                        matches[length] = []
+                                    matches[length].append(
+                                        os.path.join(root, filename))
+                        if (matches):
+                            min_length = min(matches.keys())
+                            method = matches[min_length][0]
+            if (True):
+                updater = self._recipe + ".method-pre.sh"
+                print "updater =", updater
+                if (os.path.exists(updater)):
+                    if (self.environment):
+                        local_raise_on_error(
+                            self.environment + spaced('sh ') + updater,
+                            self.shell)
+                    else:
+                        local_raise_on_error('sh ' + updater, self.shell)
+                    print "ran updater"
+                else:
+                    print "updater not found and not run"
             if (self.environment):
                 local_raise_on_error(
-                    self.environment + spaced(method) + spaced(flags))
+                    self.environment + spaced(method) + spaced(flags),
+                    self.shell)
             else:
-                local_raise_on_error(method + spaced(flags))
+                local_raise_on_error(method + spaced(flags), self.shell)
+            if (True):
+                updater = self._recipe + ".method-post.sh"
+                if (os.path.exists(updater)):
+                    if (self.environment):
+                        local_raise_on_error(
+                            self.environment + spaced('sh ') + updater,
+                            self.shell)
+                    else:
+                        local_raise_on_error('sh ' + updater, self.shell)
             if (('autogen' == used_method) and (not forced_method)):
                 self._install_3(step, extraction_directory, 'configure')
 
@@ -430,13 +507,18 @@ class Config(object):
         Step 4: compile
         """
         if (4 >= step):
+            if (self.skip_build):
+                print "(skip 4)"
+                return
             print 4
             if ('build' == self.maker):
                 maker = 'sh' + spaced(self.maker) + ".sh"
                 maker += ' --prefix=' + self._prefix
+            elif ('python_setup' == self.maker):
+                maker = 'python setup.py build'
             else:
                 maker = self.maker
-            local_raise_on_error(maker + spaced(self.maker_flags))
+            local_raise_on_error(maker + spaced(self.maker_flags), self.shell)
 
     def _install_3_4_5(self, step, extraction_directory):
         """
@@ -452,11 +534,14 @@ class Config(object):
                      'bootstrap',
                      'make',
                      'build',
-                     'cmake']):
-                local_raise_on_error('pwd')
+                     'cmake',
+                     'shell',
+                     'python_setup',
+                     ]):
+                local_raise_on_error('pwd', self.shell)
                 if (self.method not in ['make', 'build']):
                     self._install_3(step, extraction_directory)
-                if (self.maker in ['make', 'build']):
+                if (self.maker in ['make', 'build', 'python_setup']):
                     self._install_4(step)
                     print 5
                     print 'self.method =', self.method
@@ -466,23 +551,30 @@ class Config(object):
                             os.mkdir(self._prefix)
                     elif ('configure' == self.method):
                         installer = self.maker
-                    elif (self.method in ['cmake', 'autogen']):
+                    elif (self.method in ['cmake', 'autogen', 'shell']):
                         installer = 'make'
+                    elif ('python_setup' == self.method):
+                        installer = 'python setup.py'
                     else:
                         installer = self.method
                     installer += ' install'
                     if (self.installer_environment):
                         local_raise_on_error(
                             self.installer_environment +
-                            spaced(installer) + spaced(self.installer_flags))
+                            spaced(installer) + spaced(self.installer_flags),
+                            self.shell)
                     else:
                         local_raise_on_error(
-                            installer + spaced(self.installer_flags))
+                            installer + spaced(self.installer_flags),
+                            self.shell)
+                    if ('python_setup' == self.method):
+                        if (not os.path.exists(self._prefix)):
+                            os.mkdir(self._prefix)
                 elif ('b2' == self.maker):
                     print 5
                     local_raise_on_error(
-                        './b2 install' +
-                        spaced(self.installer_flags))
+                        './b2 install' + spaced(self.installer_flags),
+                        self.shell)
             else:
                 raise ValueError(
                     "Do not know how to install with method '%s'." %
@@ -498,17 +590,17 @@ class Config(object):
                 #os.mkdir(deps_dir)
             #except OSError:
                 #pass
-            local_raise_on_error('mkdir -p ' + deps_dir)
+            local_raise_on_error('mkdir -p ' + deps_dir, self.shell)
             for dep in self.dependencies:
-                local_raise_on_error("touch " +
-                                     os.path.join(deps_dir, dep.name))
+                local_raise_on_error(
+                    "touch " + os.path.join(deps_dir, dep.name), self.shell)
 
     def install(self, destination, step=0, working_dir=None, archive_dir=None,
                 global_flags='',
                 global_maker_flags='',
                 global_installer_flags='',
                 global_environment='',
-                global_installer_environment='',
+                g_installer_environment='',
                 force=False, test=False, retries=1,
                 delete_archive=False, delete_extraction=False,
                 repositories=None):
@@ -524,10 +616,15 @@ class Config(object):
         self._global_maker_flags = global_maker_flags
         self._global_installer_flags = global_installer_flags
         self._global_environment = global_environment
-        self._global_installer_environment = global_installer_environment
+        self._global_installer_environment = g_installer_environment
         self._repositories = repositories
         print 'Start installation at step %i' % step
-        archive = self.address.split('/')[-1]
+        splitted = self.address.split('/')
+        before = splitted[-2]
+        archive = splitted[-1]
+        # hack for sourceforge
+        if ('download' == archive):
+            archive = before
         is_tar = False
         for ext in ('.tar', '.tgz'):
             directory, tar, _ = archive.partition(ext)
@@ -551,6 +648,8 @@ class Config(object):
         if (self.directory):
             # override from configuration
             directory = self.directory
+            print('Override directory with value from configuration:' +
+                  directory)
         prefixes = [os.path.join(repo, self._name)
                     for repo in repositories]
         for prefix in prefixes:
@@ -560,6 +659,34 @@ class Config(object):
                 break
         if (self._prefix is None):
             self._prefix = os.path.join(destination, self._name)
+        prefix_export = "export ENV_PREFIX=" + self._prefix
+        with fabric.context_managers.prefix(prefix_export):
+            self._do_install(
+                step,
+                force,
+                test,
+                retries,
+                archive,
+                downloader,
+                delete_archive,
+                delete_extraction,
+                directory,
+                working_dir,
+                archive_dir)
+
+    def _do_install(
+            self,
+            step,
+            force,
+            test,
+            retries,
+            archive,
+            downloader,
+            delete_archive,
+            delete_extraction,
+            directory,
+            working_dir,
+            archive_dir):
         self._install_0(step, force, test)
         if (test):
             return
@@ -602,7 +729,7 @@ class RecipeParser(object):
     when building a dependency graph).
     """
 
-    from schema import Schema, And, Use
+    from schema import Schema, And, Use, Optional
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
         'method': And(str, lambda s: s in ['autogen',
@@ -610,8 +737,15 @@ class RecipeParser(object):
                                            'bootstrap',
                                            'make',
                                            'build',
-                                           'cmake']),
-        'maker': And(str, lambda s: s in ['make', 'b2', 'build']),
+                                           'cmake',
+                                           'shell',
+                                           'python_setup',
+                                           ]),
+        'maker': And(str, lambda s: s in ['make',
+                                          'b2',
+                                          'build',
+                                          'python_setup',
+                                          ]),
         'build_out_of_sources': Use(lambda x: str(x).lower() in
                                     ['1', 'true', 'on', 'yes']),
         'flags': str,
@@ -621,6 +755,11 @@ class RecipeParser(object):
         'environment': str,
         'installer_environment': str,
         'directory': str,
+        'shell': str,
+        'skip_gen': Use(lambda x: str(x).lower() in
+                        ['1', 'true', 'on', 'yes']),
+        'skip_build': Use(lambda x: str(x).lower() in
+                          ['1', 'true', 'on', 'yes']),
     })
 
     def __init__(self, recipe_book):
@@ -663,6 +802,9 @@ class RecipeParser(object):
             'environment': '',
             'installer_environment': '',
             'directory': '',
+            'shell': '',
+            'skip_gen': False,
+            'skip_build': False,
         }
         for key in config:
             try:
@@ -672,6 +814,8 @@ class RecipeParser(object):
                 value = config[key]
             except ConfigParser.NoSectionError as exception:
                 abort("Recipe '%s' is corrupted.\n%s" % (recipe, exception))
+            print 'key =', key, ' ; overriden ? ', (
+                (override) and (key in override))
             if ((override) and (key in override)):
                 for override_value in override[key].split(','):
                     if (override_value.startswith('-')):
