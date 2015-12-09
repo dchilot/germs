@@ -24,14 +24,25 @@ def get_is_valid_url_ftp(url):
 def get_is_valid_url(url):
     """
     Return True if and only if the provided url is valid.
+    Well no. It has been disabled. Always return True.
+    It is much faster now.
     """
+    return True
     if (url.startswith('ftp://')):
         _, _, url = url.partition('ftp://')
         return get_is_valid_url_ftp(url)
     else:
         import requests
         req = requests.get(url)
-        return (requests.codes.ok == req.status_code)
+        if (requests.codes.forbidden == req.status_code):
+            user_agent = {'User-agent': 'Mozilla/5.0'}
+            req = requests.get(url, headers=user_agent)
+        if (requests.codes.ok == req.status_code):
+            return True
+        else:
+            import sys
+            sys.stderr.write('url error:' + str(req.status_code) + '\n')
+            return False
 
 
 def init_path(path_name):
@@ -271,6 +282,10 @@ class Config(object):
         return self._values['address']
 
     @property
+    def downloader(self):
+        return self._values['downloader']
+
+    @property
     def method(self):
         return self._values['method']
 
@@ -359,7 +374,7 @@ class Config(object):
                     down = "wget -nc --no-check-certificate " + self.address
                     local_raise_on_error(down, self.shell)
                     if (archive.endswith(".xz")):
-                        local_raise_on_error("xz -d %s" % archive, self.shell)
+                        local_raise_on_error("xz -kd %s" % archive, self.shell)
                         archive = archive[:-3]
                     # hack for github (wget removes the .tar.gz)
                     if (not os.path.exists(archive)):
@@ -633,18 +648,21 @@ class Config(object):
                 break
         if (directory.endswith('-src')):
             directory = directory[:-4]
+        downloader = self.downloader
         if (not is_tar):
-            address = self.address.rstrip('/')
-            if (address.endswith('hg')):
-                downloader = 'hg'
-            elif (address.endswith('git')):
-                downloader = 'git'
-            else:
-                raise Exception("Do not know how to dowload from '%s'" %
-                                self.address)
+            if (self.downloader is None):
+                address = self.address.rstrip('/')
+                if (address.endswith('hg')):
+                    downloader = 'hg'
+                elif (address.endswith('git')):
+                    downloader = 'git'
+                else:
+                    raise Exception("Do not know how to download from '%s'" %
+                                    self.address)
             directory = self._name
         else:
-            downloader = 'wget'
+            if (self.downloader is None):
+                downloader = 'wget'
         if (self.directory):
             # override from configuration
             directory = self.directory
@@ -729,9 +747,14 @@ class RecipeParser(object):
     when building a dependency graph).
     """
 
-    from schema import Schema, And, Use, Optional
+    from schema import Schema, And, Or, Use, Optional
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
+        'downloader': Or(None,
+            And(str, lambda s: s in ['hg',
+                                     'git',
+                                     'wget',
+                                     ])),
         'method': And(str, lambda s: s in ['autogen',
                                            'configure',
                                            'bootstrap',
@@ -792,6 +815,7 @@ class RecipeParser(object):
         cfg.read(recipe)
         config = {
             'address': None,
+            'downloader': None,
             'method': 'configure',
             'maker': 'make',
             'build_out_of_sources': True,
