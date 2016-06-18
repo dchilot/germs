@@ -1,4 +1,5 @@
 import os
+import sys
 import networkx
 from fabric.api import local
 from fabric.api import abort
@@ -40,7 +41,6 @@ def get_is_valid_url(url):
         if (requests.codes.ok == req.status_code):
             return True
         else:
-            import sys
             sys.stderr.write('url error:' + str(req.status_code) + '\n')
             return False
 
@@ -63,12 +63,17 @@ def init_path(path_name):
     return path_array
 
 
-def build_exports(pkg_config_path, ld_library_path, library_path, path, roots):
+def build_exports(
+        pkg_config_path,
+        ld_library_path,
+        library_path,
+        path,
+        include,
+        roots):
     exports = 'export'
     exports += ' PKG_CONFIG_PATH=' + ':'.join(pkg_config_path)
-    exports += ' LD_LIBRARY_PATH=' + ':'.join(ld_library_path)
     exports += ' LIBRARY_PATH=' + ':'.join(library_path)
-    exports += ' PATH=' + ':'.join(path)
+    exports += ' INCLUDE=' + ':'.join(include)
     exports += ' ' + ' '.join(roots)
     print 'exports =', exports
     return exports
@@ -80,13 +85,17 @@ def install(name, destination=None, step=0,
             global_installer_flags='',
             global_environment='',
             g_installer_environment='',
-            force=False, test=False, retries=1,
+            force=False,
+            test=False,
+            merge=False,
+            retries=1,
             delete_archive=False, delete_extraction=False, repositories=None,
             virtualenv='',
             **override):
     """
     Command to install some software.
     """
+    print "global_flags=" + str(global_flags)
     if (destination is None):
         destination = os.path.join(os.environ["HOME"], "env")
     if (repositories is None):
@@ -118,6 +127,7 @@ def install(name, destination=None, step=0,
     print "ld_library_path", ld_library_path
     library_path = init_path('LIBRARY_PATH')
     path = init_path('PATH')
+    include = init_path('INCLUDE')
     roots = []
     has_deps = (len(nodes) > 1)
     if (virtualenv):
@@ -126,7 +136,12 @@ def install(name, destination=None, step=0,
         virtualenv = 'true'
     for config in nodes:
         exports = build_exports(
-            pkg_config_path, ld_library_path, library_path, path, roots)
+            pkg_config_path,
+            ld_library_path,
+            library_path,
+            path,
+            include,
+            roots)
         with fabric.context_managers.prefix(exports):
             with fabric.context_managers.prefix(virtualenv):
                 try:
@@ -138,6 +153,9 @@ def install(name, destination=None, step=0,
                             print "Back to installing %s" % config.name
                     else:
                         print "Install dependency: %s" % config.name
+                        if (merge):
+                            config.prefix = root_config.prefix
+                            print "Install (merged) in: %s" % config.prefix
                     #local('echo "local_step=%s"' % local_step)
                     # We do not want to force dependencies to be reinstalled
                     # if force=True is used so we only do it
@@ -151,7 +169,9 @@ def install(name, destination=None, step=0,
                         global_environment=global_environment,
                         g_installer_environment=g_installer_environment,
                         force=(force and is_root),
-                        test=test, retries=retries,
+                        test=test,
+                        merge=merge,
+                        retries=retries,
                         delete_archive=delete_archive,
                         delete_extraction=delete_extraction,
                         repositories=repositories)
@@ -174,13 +194,16 @@ def install(name, destination=None, step=0,
                         path.insert(
                             0,
                             os.path.join(full_destination, sub_dir))
+                    elif (sub_dir in ['include']):
+                        include.insert(
+                            0,
+                            os.path.join(full_destination, sub_dir))
 
 
 class RecipeBook(object):
     """
     Tells where to find recipies on the disk.
     """
-
     def __init__(self):
         self._root = os.path.dirname(os.path.abspath(__file__))
 
@@ -221,7 +244,6 @@ class Config(object):
         self._recipe = recipe
         self._values = values
         self._dependencies = set()
-        self._prefix = None
         self._global_flags = ''
         self._global_maker_flags = ''
         self._global_installer_flags = ''
@@ -249,6 +271,7 @@ class Config(object):
             if (isinstance(value, six.string_types)):
                 new_value = value.format(**mapping)
                 if (new_value != value):
+                    print "  update", key, "->", new_value
                     self._values[key] = new_value
 
     def __str__(self):
@@ -260,7 +283,11 @@ class Config(object):
 
     @property
     def prefix(self):
-        return self._prefix
+        return self._values['prefix']
+
+    @prefix.setter
+    def prefix(self, value):
+        self._values['prefix'] = value
 
     @property
     def varname(self):
@@ -320,6 +347,10 @@ class Config(object):
         return self._values['force']
 
     @property
+    def check(self):
+        return self._values['check']
+
+    @property
     def build_out_of_sources(self):
         return self._values['build_out_of_sources']
 
@@ -339,24 +370,34 @@ class Config(object):
     def skip_build(self):
         return self._values['skip_build']
 
+    @property
+    def env_requires(self):
+        return self._values['env_requires']
+
     def _install_0(self, step, force, test):
-        """
-        Step 0: Check if the recipe has been installed.
-        """
+        """Step 0: Check if the recipe has been installed."""
         if (0 >= step):
             print 0
-            if (os.path.isdir(self._prefix)):
+            if (self.check is None):
+                check = self.prefix
+            else:
+                check = self.check
+            check = check.replace('{prefix}', self.prefix)
+            # print "check =", check
+            if (os.path.exists(check)):
                 if (force):
                     if (not test):
                         import shutil
-                        shutil.rmtree(self._prefix)
+                        shutil.rmtree(self.prefix)
                 else:
-                    print "'%s' already exists." % (self._prefix)
+                    print "'%s' already exists." % (check)
                     raise StopIteration
 
     def _install_1(self, step, archive, downloader, working_dir, archive_dir,
                    extraction_directory):
         """
+        Download sources.
+
         `archive`: name of the archive to be downloaded (only valid for wget).
         `dowloader`: program used to download the software.
         Step 1: For wget compatible addresses, download and extract the tar
@@ -374,8 +415,11 @@ class Config(object):
                     down = "wget -nc --no-check-certificate " + self.address
                     local_raise_on_error(down, self.shell)
                     if (archive.endswith(".xz")):
-                        local_raise_on_error("xz -kd %s" % archive, self.shell)
-                        archive = archive[:-3]
+                        archive_tar = archive[:-3]
+                        if (not os.path.exists(archive_tar)):
+                            local_raise_on_error(
+                                "xz -kd %s" % archive, self.shell)
+                        archive = archive_tar
                     # hack for github (wget removes the .tar.gz)
                     if (not os.path.exists(archive)):
                         archive = archive[:archive.rfind('.')]
@@ -420,10 +464,7 @@ class Config(object):
                                          self.shell)
 
     def _install_2(self, step, extraction_directory):
-        """
-        Move to build directory.
-        Step 2: clean build directory if needed.
-        """
+        """Step 2: Move to build directory. Clean build directory if needed."""
         os.chdir(extraction_directory)
         if (self.build_out_of_sources):
             if (2 >= step):
@@ -442,9 +483,7 @@ class Config(object):
             os.chdir('build_42')
 
     def _install_3(self, step, extraction_directory, forced_method=None):
-        """
-        Step 3: generate makefile (or equivalent)
-        """
+        """Step 3: generate makefile (or equivalent)."""
         if (3 >= step):
             if (self.skip_gen):
                 print "(skip 3)"
@@ -459,7 +498,7 @@ class Config(object):
             if (used_method == 'cmake'):
                 if (self.build_out_of_sources):
                     flags += ' .. '
-                flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self._prefix
+                flags += ' -DCMAKE_INSTALL_PREFIX:PATH=' + self.prefix
                 method = used_method
             elif (used_method == 'shell'):
                 method = "sh " + self._recipe + ".gen.sh"
@@ -467,7 +506,7 @@ class Config(object):
                 method = "python setup.py config"
             else:
                 if (used_method != 'autogen'):
-                    flags += ' --prefix=' + self._prefix
+                    flags += ' --prefix=' + self.prefix
                 method = os.path.join(extraction_directory, used_method)
                 if (not os.path.exists(method)):
                     if (os.path.exists(method + '.sh')):
@@ -528,7 +567,7 @@ class Config(object):
             print 4
             if ('build' == self.maker):
                 maker = 'sh' + spaced(self.maker) + ".sh"
-                maker += ' --prefix=' + self._prefix
+                maker += ' --prefix=' + self.prefix
             elif ('python_setup' == self.maker):
                 maker = 'python setup.py build'
             else:
@@ -562,8 +601,8 @@ class Config(object):
                     print 'self.method =', self.method
                     if ('build' == self.method):
                         installer = 'sh ' + self.method + ".sh"
-                        if (not os.path.exists(self._prefix)):
-                            os.mkdir(self._prefix)
+                        if (not os.path.exists(self.prefix)):
+                            os.mkdir(self.prefix)
                     elif ('configure' == self.method):
                         installer = self.maker
                     elif (self.method in ['cmake', 'autogen', 'shell']):
@@ -583,8 +622,8 @@ class Config(object):
                             installer + spaced(self.installer_flags),
                             self.shell)
                     if ('python_setup' == self.method):
-                        if (not os.path.exists(self._prefix)):
-                            os.mkdir(self._prefix)
+                        if (not os.path.exists(self.prefix)):
+                            os.mkdir(self.prefix)
                 elif ('b2' == self.maker):
                     print 5
                     local_raise_on_error(
@@ -600,7 +639,7 @@ class Config(object):
         Step 6: add dependencies.
         """
         if (self.dependencies):
-            deps_dir = os.path.join(self._prefix, "deps")
+            deps_dir = os.path.join(self.prefix, "deps")
             #try:
                 #os.mkdir(deps_dir)
             #except OSError:
@@ -616,7 +655,10 @@ class Config(object):
                 global_installer_flags='',
                 global_environment='',
                 g_installer_environment='',
-                force=False, test=False, retries=1,
+                force=False,
+                test=False,
+                merge=False,
+                retries=1,
                 delete_archive=False, delete_extraction=False,
                 repositories=None):
         """
@@ -673,16 +715,17 @@ class Config(object):
         for prefix in prefixes:
             if (os.path.exists(prefix)):
                 print 'Prefix:', prefix
-                self._prefix = prefix
+                self.prefix = prefix
                 break
-        if (self._prefix is None):
-            self._prefix = os.path.join(destination, self._name)
-        prefix_export = "export ENV_PREFIX=" + self._prefix
+        if (self.prefix is None):
+            self.prefix = os.path.join(destination, self._name)
+        prefix_export = "export ENV_PREFIX=" + self.prefix
         with fabric.context_managers.prefix(prefix_export):
             self._do_install(
                 step,
                 force,
                 test,
+                merge,
                 retries,
                 archive,
                 downloader,
@@ -697,6 +740,7 @@ class Config(object):
             step,
             force,
             test,
+            merge,
             retries,
             archive,
             downloader,
@@ -715,7 +759,7 @@ class Config(object):
             import tempfile
             archive_dir = tempfile.gettempdir()
         extraction_directory = os.path.join(working_dir, directory)
-        self._replace_in_values({ 'prefix': self._prefix })
+        self._replace_in_values({'prefix': self.prefix})
         tries = 0
         done = 0
         while ((not done) and (tries < retries)):
@@ -750,11 +794,12 @@ class RecipeParser(object):
     from schema import Schema, And, Or, Use, Optional
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'downloader': Or(None,
-            And(str, lambda s: s in ['hg',
-                                     'git',
-                                     'wget',
-                                     ])),
+        'downloader':
+            Or(None,
+                And(str, lambda s: s in ['hg',
+                                         'git',
+                                         'wget',
+                                         ])),
         'method': And(str, lambda s: s in ['autogen',
                                            'configure',
                                            'bootstrap',
@@ -783,6 +828,9 @@ class RecipeParser(object):
                         ['1', 'true', 'on', 'yes']),
         'skip_build': Use(lambda x: str(x).lower() in
                           ['1', 'true', 'on', 'yes']),
+        'prefix': Or(None, str),
+        'check': Or(None, str),
+        'env_requires': str,
     })
 
     def __init__(self, recipe_book):
@@ -795,7 +843,8 @@ class RecipeParser(object):
 
     def parse(self, name, recursive=False, override=None):
         """
-        Parses and validates a recipe.
+        Parse and validate a recipe.
+
         `name`: the name of the recipe (not the file).
         `recursive`: if set to True, also parse the dependencies.
         `override`: dictionary that can contain an override value for each
@@ -829,6 +878,9 @@ class RecipeParser(object):
             'shell': '',
             'skip_gen': False,
             'skip_build': False,
+            'prefix': None,
+            'check': None,
+            'env_requires': '',
         }
         for key in config:
             try:
@@ -853,9 +905,17 @@ class RecipeParser(object):
         print 'config (before)'
         print config
         config = RecipeParser._schema.validate(config)
-        #print 'config (after)'
-        #print config
+        print 'config (after)'
+        print config
         #abort('test')
+        missing_env_requires = []
+        for variable in config['env_requires'].split(','):
+            if (variable not in os.environ):
+                missing_env_requires.append(variable)
+        if (missing_env_requires):
+            abort(
+                'Missing environment variable(s): ' +
+                str(missing_env_requires))
         print 'Recipe validated.'
         if (recursive):
             config = Config(name, recipe, config, self)
@@ -866,9 +926,7 @@ class RecipeParser(object):
 
     @property
     def graph(self):
-        """
-        Return a graph representation of the dependencies.
-        """
+        """Return a graph representation of the dependencies."""
         graph = networkx.DiGraph()
         for recipe in self._cache.values():
             map(lambda x: graph.add_edge(recipe, x), recipe.dependencies)
