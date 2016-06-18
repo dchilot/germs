@@ -41,7 +41,6 @@ def get_is_valid_url(url):
         if (requests.codes.ok == req.status_code):
             return True
         else:
-            import sys
             sys.stderr.write('url error:' + str(req.status_code) + '\n')
             return False
 
@@ -64,12 +63,16 @@ def init_path(path_name):
     return path_array
 
 
-def build_exports(pkg_config_path, ld_library_path, library_path, path, include, roots):
+def build_exports(
+        pkg_config_path,
+        ld_library_path,
+        library_path,
+        path,
+        include,
+        roots):
     exports = 'export'
     exports += ' PKG_CONFIG_PATH=' + ':'.join(pkg_config_path)
-    # exports += ' LD_LIBRARY_PATH=' + ':'.join(ld_library_path)
     exports += ' LIBRARY_PATH=' + ':'.join(library_path)
-    # exports += ' PATH=' + ':'.join(path)
     exports += ' INCLUDE=' + ':'.join(include)
     exports += ' ' + ' '.join(roots)
     print 'exports =', exports
@@ -133,7 +136,12 @@ def install(name, destination=None, step=0,
         virtualenv = 'true'
     for config in nodes:
         exports = build_exports(
-            pkg_config_path, ld_library_path, library_path, path, include, roots)
+            pkg_config_path,
+            ld_library_path,
+            library_path,
+            path,
+            include,
+            roots)
         with fabric.context_managers.prefix(exports):
             with fabric.context_managers.prefix(virtualenv):
                 try:
@@ -196,7 +204,6 @@ class RecipeBook(object):
     """
     Tells where to find recipies on the disk.
     """
-
     def __init__(self):
         self._root = os.path.dirname(os.path.abspath(__file__))
 
@@ -237,7 +244,6 @@ class Config(object):
         self._recipe = recipe
         self._values = values
         self._dependencies = set()
-        # self._prefix = None
         self._global_flags = ''
         self._global_maker_flags = ''
         self._global_installer_flags = ''
@@ -278,7 +284,6 @@ class Config(object):
     @property
     def prefix(self):
         return self._values['prefix']
-        # return self._prefix
 
     @prefix.setter
     def prefix(self, value):
@@ -370,9 +375,7 @@ class Config(object):
         return self._values['env_requires']
 
     def _install_0(self, step, force, test):
-        """
-        Step 0: Check if the recipe has been installed.
-        """
+        """Step 0: Check if the recipe has been installed."""
         if (0 >= step):
             print 0
             if (self.check is None):
@@ -393,6 +396,8 @@ class Config(object):
     def _install_1(self, step, archive, downloader, working_dir, archive_dir,
                    extraction_directory):
         """
+        Download sources.
+
         `archive`: name of the archive to be downloaded (only valid for wget).
         `dowloader`: program used to download the software.
         Step 1: For wget compatible addresses, download and extract the tar
@@ -412,7 +417,8 @@ class Config(object):
                     if (archive.endswith(".xz")):
                         archive_tar = archive[:-3]
                         if (not os.path.exists(archive_tar)):
-                            local_raise_on_error("xz -kd %s" % archive, self.shell)
+                            local_raise_on_error(
+                                "xz -kd %s" % archive, self.shell)
                         archive = archive_tar
                     # hack for github (wget removes the .tar.gz)
                     if (not os.path.exists(archive)):
@@ -458,10 +464,7 @@ class Config(object):
                                          self.shell)
 
     def _install_2(self, step, extraction_directory):
-        """
-        Move to build directory.
-        Step 2: clean build directory if needed.
-        """
+        """Step 2: Move to build directory. Clean build directory if needed."""
         os.chdir(extraction_directory)
         if (self.build_out_of_sources):
             if (2 >= step):
@@ -480,9 +483,7 @@ class Config(object):
             os.chdir('build_42')
 
     def _install_3(self, step, extraction_directory, forced_method=None):
-        """
-        Step 3: generate makefile (or equivalent)
-        """
+        """Step 3: generate makefile (or equivalent)."""
         if (3 >= step):
             if (self.skip_gen):
                 print "(skip 3)"
@@ -758,7 +759,7 @@ class Config(object):
             import tempfile
             archive_dir = tempfile.gettempdir()
         extraction_directory = os.path.join(working_dir, directory)
-        self._replace_in_values({ 'prefix': self.prefix })
+        self._replace_in_values({'prefix': self.prefix})
         tries = 0
         done = 0
         while ((not done) and (tries < retries)):
@@ -793,11 +794,12 @@ class RecipeParser(object):
     from schema import Schema, And, Or, Use, Optional
     _schema = Schema({
         'address': And(str, len, get_is_valid_url),
-        'downloader': Or(None,
-            And(str, lambda s: s in ['hg',
-                                     'git',
-                                     'wget',
-                                     ])),
+        'downloader':
+            Or(None,
+                And(str, lambda s: s in ['hg',
+                                         'git',
+                                         'wget',
+                                         ])),
         'method': And(str, lambda s: s in ['autogen',
                                            'configure',
                                            'bootstrap',
@@ -841,7 +843,8 @@ class RecipeParser(object):
 
     def parse(self, name, recursive=False, override=None):
         """
-        Parses and validates a recipe.
+        Parse and validate a recipe.
+
         `name`: the name of the recipe (not the file).
         `recursive`: if set to True, also parse the dependencies.
         `override`: dictionary that can contain an override value for each
@@ -910,9 +913,9 @@ class RecipeParser(object):
             if (variable not in os.environ):
                 missing_env_requires.append(variable)
         if (missing_env_requires):
-            print >>sys.stderr, \
-                'Missing environment variable(s):', missing_env_requires
-            sys.exit(1)
+            abort(
+                'Missing environment variable(s): ' +
+                str(missing_env_requires))
         print 'Recipe validated.'
         if (recursive):
             config = Config(name, recipe, config, self)
@@ -923,9 +926,7 @@ class RecipeParser(object):
 
     @property
     def graph(self):
-        """
-        Return a graph representation of the dependencies.
-        """
+        """Return a graph representation of the dependencies."""
         graph = networkx.DiGraph()
         for recipe in self._cache.values():
             map(lambda x: graph.add_edge(recipe, x), recipe.dependencies)
