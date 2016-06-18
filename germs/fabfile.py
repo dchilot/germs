@@ -390,7 +390,7 @@ class Config(object):
                         import shutil
                         shutil.rmtree(self.prefix)
                 else:
-                    print "'%s' already exists." % (self.prefix)
+                    print "'%s' already exists." % (check)
                     raise StopIteration
 
     def _install_1(self, step, archive, downloader, working_dir, archive_dir,
