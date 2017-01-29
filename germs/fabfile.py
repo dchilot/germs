@@ -830,7 +830,7 @@ class RecipeParser(object):
                           ['1', 'true', 'on', 'yes']),
         'prefix': Or(None, str),
         'check': Or(None, str),
-        'env_requires': str,
+        'env_requires': Or(None, str),
     })
 
     def __init__(self, recipe_book):
@@ -880,7 +880,7 @@ class RecipeParser(object):
             'skip_build': False,
             'prefix': None,
             'check': None,
-            'env_requires': '',
+            'env_requires': None,
         }
         for key in config:
             try:
@@ -908,14 +908,15 @@ class RecipeParser(object):
         print 'config (after)'
         print config
         #abort('test')
-        missing_env_requires = []
-        for variable in config['env_requires'].split(','):
-            if (variable not in os.environ):
-                missing_env_requires.append(variable)
-        if (missing_env_requires):
-            abort(
-                'Missing environment variable(s): ' +
-                str(missing_env_requires))
+        if (config['env_requires']):
+            missing_env_requires = []
+            for variable in config['env_requires'].split(','):
+                if (variable not in os.environ):
+                    missing_env_requires.append(variable)
+            if (missing_env_requires):
+                abort(
+                    'Missing environment variable(s): ' +
+                    str(missing_env_requires))
         print 'Recipe validated.'
         if (recursive):
             config = Config(name, recipe, config, self)
