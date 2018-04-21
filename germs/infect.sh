@@ -3,15 +3,22 @@ function infect()
 # $1: directory in $INFECTION_ROOT to add to the paths
 # $2: "front" to prepend to the paths (default is to append)
 {
-	local _gloubi_clean_INFECTION_ROOT=
+	local _gloubi_INFECTION_ROOT=
 	local _gloubi_selected="$1"
 	local _gloubi_push_front=
+	local _gloubi_direct=
 	if [ -n "$2" -a "front" = "$2" ] ; then
 		_gloubi_push_front=1
 	fi
-	if [ -z "$INFECTION_ROOT" ] ; then
-		INFECTION_ROOT="$HOME/env"
-		_gloubi_clean_INFECTION_ROOT=1
+	if [[ $_gloubi_selected == /* ]] ; then
+		# special case: infect the folder directly
+		_gloubi_direct=1
+	else
+		if [ -n "$INFECTION_ROOT" ] ; then
+			_gloubi_INFECTION_ROOT=$INFECTION_ROOT
+		else
+			_gloubi_INFECTION_ROOT="$HOME/env"
+		fi
 	fi
 
 	function _gloubi_infect_path()
@@ -76,15 +83,14 @@ function infect()
 		fi
 	}
 
-	if [ -n "$_gloubi_selected" ] ; then
-		_gloubi_infect "$INFECTION_ROOT/$_gloubi_selected"
+	if [ -n "$_gloubi_direct" ] ; then
+		_gloubi_infect "$_gloubi_selected"
+	elif [ -n "$_gloubi_selected" ] ; then
+		_gloubi_infect "$_gloubi_INFECTION_ROOT/$_gloubi_selected"
 	else
-		for dir in $(find "$INFECTION_ROOT" -mindepth 1 -maxdepth 1 -type d) ; do
+		for dir in $(find "$_gloubi_INFECTION_ROOT" -mindepth 1 -maxdepth 1 -type d) ; do
 			_gloubi_infect "$dir"
 		done
-	fi
-	if [ -n "$_gloubi_clean_INFECTION_ROOT" ] ; then
-		unset INFECTION_ROOT
 	fi
 	hash -r
 }
