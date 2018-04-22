@@ -84,6 +84,7 @@ def install(name, destination=None, step=0,
             global_maker_flags='',
             global_installer_flags='',
             global_environment='',
+            g_maker_environment='',
             g_installer_environment='',
             force=False,
             test=False,
@@ -167,6 +168,7 @@ def install(name, destination=None, step=0,
                         global_maker_flags=global_maker_flags,
                         global_installer_flags=global_installer_flags,
                         global_environment=global_environment,
+                        g_maker_environment=g_maker_environment,
                         g_installer_environment=g_installer_environment,
                         force=(force and is_root),
                         test=test,
@@ -248,6 +250,7 @@ class Config(object):
         self._global_maker_flags = ''
         self._global_installer_flags = ''
         self._global_environment = ''
+        self._global_maker_environment = ''
         self._global_installer_environment = ''
         if (parser is not None):
             deps = self._values['dependencies']
@@ -336,6 +339,11 @@ class Config(object):
     @property
     def environment(self):
         return self._values['environment'] + spaced(self._global_environment)
+
+    @property
+    def maker_environment(self):
+        return self._values['maker_environment'] + \
+            spaced(self._global_maker_environment)
 
     @property
     def installer_environment(self):
@@ -572,7 +580,15 @@ class Config(object):
                 maker = 'python setup.py build'
             else:
                 maker = self.maker
-            local_raise_on_error(maker + spaced(self.maker_flags), self.shell)
+            if (self.maker_environment):
+                local_raise_on_error(
+                    self.maker_environment +
+                    spaced(maker) + spaced(self.maker_flags),
+                    self.shell)
+            else:
+                local_raise_on_error(
+                    maker + spaced(self.maker_flags),
+                    self.shell)
 
     def _install_3_4_5(self, step, extraction_directory):
         """
@@ -654,6 +670,7 @@ class Config(object):
                 global_maker_flags='',
                 global_installer_flags='',
                 global_environment='',
+                g_maker_environment='',
                 g_installer_environment='',
                 force=False,
                 test=False,
@@ -673,6 +690,7 @@ class Config(object):
         self._global_maker_flags = global_maker_flags
         self._global_installer_flags = global_installer_flags
         self._global_environment = global_environment
+        self._global_maker_environment = g_maker_environment
         self._global_installer_environment = g_installer_environment
         self._repositories = repositories
         print 'Start installation at step %i' % step
@@ -821,6 +839,7 @@ class RecipeParser(object):
         'installer_flags': str,
         'dependencies': str,
         'environment': str,
+        'maker_environment': str,
         'installer_environment': str,
         'directory': str,
         'shell': str,
@@ -873,6 +892,7 @@ class RecipeParser(object):
             'installer_flags': '',
             'dependencies': '',
             'environment': '',
+            'maker_environment': '',
             'installer_environment': '',
             'directory': '',
             'shell': '',
