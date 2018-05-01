@@ -621,7 +621,8 @@ class Config(object):
                             os.mkdir(self.prefix)
                     elif ('configure' == self.method):
                         installer = self.maker
-                    elif (self.method in ['cmake', 'autogen', 'shell']):
+                    elif (self.method in
+                            ['cmake', 'autogen', 'shell', 'bootstrap']):
                         installer = 'make'
                     elif ('python_setup' == self.method):
                         installer = 'python setup.py'
